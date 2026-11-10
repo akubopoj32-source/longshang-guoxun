@@ -1,0 +1,13 @@
+# Local registration materials, print copies, and downloaded references
+/*.docx
+/*.pdf
+/*.url
+/庆阳果业参考资料/
+
+# Local secrets and development files
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+node_modules/
