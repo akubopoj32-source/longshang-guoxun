@@ -2,9 +2,39 @@
 
 面向庆阳苹果果园的智能巡查记录助手。巡查员提交文字和照片，工作台整理字段、追问缺项并保存原始依据。记录可由人工复核和导出。
 
-## 本地启动
+## Windows 桌面客户端
 
-需要 Python 3.10 或更新版本。仓库无需安装第三方包。
+解压构建包后，双击 `LongshangGuoxun.exe`。客户端自带运行时，启动时会拉起本机巡查服务。请保留可执行文件旁的资源目录。桌面记录保存在 `%APPDATA%\陇上果巡\records.sqlite3`。
+
+从源代码运行桌面端，需要 Node.js 22.12 或更新版本及 Python 3.10 或更新版本。
+
+```powershell
+cd desktop
+npm ci
+npm start
+```
+
+在 Windows 上，从 `desktop/` 目录构建可分发目录：
+
+```powershell
+python -m pip install PyInstaller
+npm run build:win
+```
+
+输出位于 `dist/LongshangGuoxun-win32-<架构>/`，分发时提供整个目录。要沿用此前网页模式的记录，可关闭两种运行方式后，将 `.orchard/records.sqlite3` 复制到桌面数据目录。若目标已有记录，请先备份。开发或测试也可用 `ORCHARD_DESKTOP_DB` 指定独立的数据库文件。
+
+## Docker 部署
+
+```powershell
+docker compose up --build -d
+docker compose ps
+```
+
+访问 [容器工作台](http://127.0.0.1:8765)。Compose 默认仅向本机发布端口，巡查数据保存在命名卷 `records` 中。`docker compose down` 可停止部署并保留数据卷。端口冲突时可在启动前设置 `ORCHARD_PORT`。容器部署与桌面客户端使用独立的数据位置，默认按本机演示方式部署。
+
+## 浏览器调试
+
+需要 Python 3.10 或更新版本。Python 服务无需安装第三方运行依赖。
 
 ```powershell
 python app.py
@@ -29,7 +59,7 @@ $env:ORCHARD_MODEL_KEY = '本机的服务密钥'
 python app.py
 ```
 
-启用后，本轮文字、图片及用于提取的当前字段将发送到配置的模型服务。仅使用获准传输的材料，密钥通过本机环境变量配置。当前复核视图用于本地原型演示，巡查与复核共用本机工作台。
+桌面客户端可从同一个 PowerShell 窗口启动，继承这些环境变量。Docker Compose 也会读取这些变量。启用后，本轮文字、图片及用于提取的当前字段将发送到配置的模型服务。仅使用获准传输的材料，密钥通过本机环境变量配置。当前复核视图用于本地原型演示，巡查与复核共用工作台。
 
 ## 参赛资料
 
@@ -44,6 +74,8 @@ python app.py
 | 路径 | 内容 |
 |---|---|
 | `app.py` | 本地工作台启动入口 |
+| `desktop/` | Electron 桌面入口和 Windows 打包脚本 |
+| `Dockerfile`、`compose.yaml` | 服务镜像与本地容器部署 |
 | `orchard_workbench/` | 服务端、巡查规则与网页 |
 | `docs/` | 项目策划书及可打印版本 |
 | `references/` | 赛事方案及庆阳果业公开资料 |

@@ -1,0 +1,15 @@
+services:
+  workbench:
+    build: .
+    ports:
+      - "127.0.0.1:${ORCHARD_PORT:-8765}:8765"
+    volumes:
+      - records:/data
+    environment:
+      ORCHARD_MODEL_URL: ${ORCHARD_MODEL_URL:-}
+      ORCHARD_MODEL: ${ORCHARD_MODEL:-}
+      ORCHARD_MODEL_KEY: ${ORCHARD_MODEL_KEY:-}
+    restart: unless-stopped
+
+volumes:
+  records:

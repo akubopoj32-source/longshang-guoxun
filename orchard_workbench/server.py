@@ -2,7 +2,11 @@
 
 import argparse
 import json
+import os
+import secrets
 import sqlite3
+import sys
+import threading
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -22,6 +26,14 @@ MAX_REQUEST = 6 * 1024 * 1024
 
 
 class Workbench(BaseHTTPRequestHandler):
+    def authorized(self):
+        token = self.server.local_token
+        supplied = self.headers.get("X-Orchard-Token", "").encode()
+        if not token or secrets.compare_digest(supplied, token):
+            return True
+        self.send_json(403, {"error": "当前请求没有工作台访问权限。"})
+        return False
+
     def send_content(self, status, content, content_type):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -83,12 +95,16 @@ class Workbench(BaseHTTPRequestHandler):
                 for record_id, task, location, status, activity_at in rows]
 
     def do_GET(self):
+        if not self.authorized():
+            return
         path = urlsplit(self.path).path
         if path in ASSETS:
             filename, mime = ASSETS[path]
             self.send_content(200, (ROOT / "web" / filename).read_bytes(), mime)
         elif path == "/api/config":
             self.send_json(200, {"tasks": TASKS, "mode": "model" if model_enabled() else "demo"})
+        elif path == "/api/health":
+            self.send_json(200, {"status": "ok"})
         elif path == "/api/records":
             self.send_json(200, {"records": self.list_records()})
         elif path.startswith("/api/records/"):
@@ -102,6 +118,8 @@ class Workbench(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "页面不存在。"})
 
     def do_POST(self):
+        if not self.authorized():
+            return
         path = urlsplit(self.path).path
         try:
             data = self.read_json()
@@ -144,15 +162,24 @@ class Workbench(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description="陇上果巡本地演示工作台")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--host", choices=("127.0.0.1", "0.0.0.0"), default="127.0.0.1")
     parser.add_argument("--db", type=Path, default=ROOT.parent / ".orchard" / "records.sqlite3")
+    parser.add_argument("--exit-on-stdin-close", action="store_true")
     args = parser.parse_args()
     args.db.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(args.db)
     try:
         db.execute("CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
-        with HTTPServer(("127.0.0.1", args.port), Workbench) as server:
+        with HTTPServer((args.host, args.port), Workbench) as server:
             server.db = db
-            print(f"http://127.0.0.1:{server.server_port}", flush=True)
+            server.local_token = os.getenv("ORCHARD_LOCAL_TOKEN", "").encode()
+            if args.exit_on_stdin_close:
+                def stop_when_parent_exits():
+                    sys.stdin.buffer.read()
+                    server.shutdown()
+
+                threading.Thread(target=stop_when_parent_exits, daemon=True).start()
+            print(f"http://{args.host}:{server.server_port}", flush=True)
             server.serve_forever()
     except KeyboardInterrupt:
         pass

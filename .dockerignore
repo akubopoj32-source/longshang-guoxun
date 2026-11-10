@@ -1,0 +1,5 @@
+*
+!app.py
+!orchard_workbench/
+!orchard_workbench/**
+**/__pycache__/

@@ -1,0 +1,17 @@
+{
+  "name": "longshang-guoxun",
+  "productName": "陇上果巡",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.cjs",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "build:win": "node build.cjs"
+  },
+  "devDependencies": {
+    "electron": "45.2.3"
+  }
+}
