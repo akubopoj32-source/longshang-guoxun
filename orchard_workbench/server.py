@@ -4,6 +4,7 @@ import argparse
 import json
 import sqlite3
 import uuid
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -56,6 +57,31 @@ class Workbench(BaseHTTPRequestHandler):
         result = self.server.db.execute("SELECT data FROM records WHERE id = ?", (record_id,)).fetchone()
         return json.loads(result[0]) if result else None
 
+    def list_records(self):
+        rows = self.server.db.execute("""
+            WITH summaries AS (
+                SELECT id, rowid,
+                       json_extract(data, '$.task') AS task,
+                       json_extract(data, '$.fields.location.value') AS location,
+                       json_extract(data, '$.status') AS status,
+                       json_extract(data, '$.updated_at') AS updated_at,
+                       json_extract(data, '$.turns[#-1].time') AS last_turn,
+                       json_extract(data, '$.reviews[#-1].time') AS last_review
+                FROM records
+            )
+            SELECT id, task, location, status,
+                   COALESCE(updated_at, CASE
+                       WHEN COALESCE(julianday(last_review), 0) >= COALESCE(julianday(last_turn), 0)
+                       THEN COALESCE(last_review, last_turn)
+                       ELSE last_turn
+                   END) AS activity_at
+            FROM summaries
+            ORDER BY julianday(activity_at) DESC, rowid DESC
+        """)
+        return [{"id": record_id, "task": task, "location": location,
+                 "status": status, "activity_at": activity_at}
+                for record_id, task, location, status, activity_at in rows]
+
     def do_GET(self):
         path = urlsplit(self.path).path
         if path in ASSETS:
@@ -63,6 +89,8 @@ class Workbench(BaseHTTPRequestHandler):
             self.send_content(200, (ROOT / "web" / filename).read_bytes(), mime)
         elif path == "/api/config":
             self.send_json(200, {"tasks": TASKS, "mode": "model" if model_enabled() else "demo"})
+        elif path == "/api/records":
+            self.send_json(200, {"records": self.list_records()})
         elif path.startswith("/api/records/"):
             record_id = path.removeprefix("/api/records/")
             record = self.load(record_id)
@@ -102,6 +130,7 @@ class Workbench(BaseHTTPRequestHandler):
                     if not isinstance(operation, str):
                         raise ValueError("请选择有效的复核操作。")
                     review(record, operation)
+            record["updated_at"] = datetime.now(timezone.utc).isoformat()
             with self.server.db:
                 self.server.db.execute("INSERT OR REPLACE INTO records(id, data) VALUES (?, ?)",
                                        (record_id, json.dumps(record, ensure_ascii=False)))

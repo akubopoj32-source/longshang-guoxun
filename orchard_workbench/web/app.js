@@ -3,7 +3,9 @@ const statusNames = {draft: "草稿", pending: "待复核", confirmed: "已复�
 const fieldStates = {recorded: "已记录", unknown: "待核实", conflict: "待核对"};
 let tasks;
 let state;
+let records = [];
 let busy = false;
+const activityFormat = new Intl.DateTimeFormat("zh-CN", {dateStyle: "short", timeStyle: "short"});
 
 async function request(path, body) {
   const options = body === undefined ? {} : {
@@ -27,6 +29,45 @@ function notify(text, error = false) {
   $("notice").className = error ? "error" : "";
 }
 
+function renderList() {
+  const filter = $("record-filter").value;
+  const visible = filter ? records.filter((record) => record.status === filter) : records;
+  $("list-empty").hidden = visible.length > 0;
+  $("list-empty").textContent = filter ? "没有符合筛选条件的记录。" : "还没有巡查记录。";
+  $("record-list").replaceChildren();
+  for (const record of visible) {
+    const item = element("li");
+    const button = element("button", undefined, "record-item");
+    button.type = "button";
+    button.disabled = busy;
+    if (state?.id === record.id) button.setAttribute("aria-current", "true");
+    button.append(
+      element("strong", record.location || "点位待补充"),
+      element("span", `${tasks[record.task].label} · ${statusNames[record.status]}`),
+      element("span", `#${record.id.slice(0, 8)} · ${record.activity_at ? activityFormat.format(new Date(record.activity_at)) : "无活动时间"}`),
+    );
+    button.addEventListener("click", () => {
+      if (state?.id === record.id || !canLeaveInput()) return;
+      run(async () => {
+        update(await request(`/api/records/${record.id}`));
+        $("turn").reset();
+      });
+    });
+    item.append(button);
+    $("record-list").append(item);
+  }
+}
+
+async function refreshRecords() {
+  records = (await request("/api/records")).records;
+  renderList();
+}
+
+function canLeaveInput() {
+  return !($("message").value.trim() || $("photo").files.length)
+    || window.confirm("当前输入尚未处理。要放弃这轮输入并切换记录吗？");
+}
+
 async function run(action) {
   if (busy) return;
   busy = true;
@@ -48,6 +89,8 @@ function update(data) {
   localStorage.setItem("orchard-last-record", data.id);
   const record = data.record;
   const task = tasks[record.task];
+  $("task").value = record.task;
+  renderList();
   $("record-status").textContent = `${task.label} · 第 ${record.version} 版 · ${statusNames[record.status]}`;
   $("turn").hidden = !["draft", "returned"].includes(record.status);
   $("history").hidden = record.turns.length === 0;
@@ -99,6 +142,7 @@ async function changeReview(action) {
   update(await request(`/api/records/${state.id}/review`, {
     action, version: state.record.version, status: state.record.status,
   }));
+  await refreshRecords();
 }
 
 function exportRecord() {
@@ -126,9 +170,12 @@ function readImage(file) {
 
 $("new-record").addEventListener("submit", (event) => {
   event.preventDefault();
+  if (!canLeaveInput()) return;
   run(async () => {
     update(await request("/api/records", {task: $("task").value}));
     $("turn").reset();
+    $("record-filter").value = "";
+    await refreshRecords();
   });
 });
 
@@ -140,8 +187,11 @@ $("turn").addEventListener("submit", (event) => {
       message: $("message").value, image, version: state.record.version, status: state.record.status,
     }));
     $("turn").reset();
+    await refreshRecords();
   });
 });
+
+$("record-filter").addEventListener("change", renderList);
 
 run(async () => {
   const config = await request("/api/config");
@@ -154,13 +204,11 @@ run(async () => {
     option.value = key;
     $("task").append(option);
   }
+  await refreshRecords();
   const previous = localStorage.getItem("orchard-last-record");
-  if (previous) {
-    try {
-      update(await request(`/api/records/${encodeURIComponent(previous)}`));
-      $("task").value = state.record.task;
-    } catch {
-      localStorage.removeItem("orchard-last-record");
-    }
+  if (records.some((record) => record.id === previous)) {
+    update(await request(`/api/records/${previous}`));
+  } else {
+    localStorage.removeItem("orchard-last-record");
   }
 });
