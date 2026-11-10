@@ -32,6 +32,13 @@ docker compose ps
 
 访问 [容器工作台](http://127.0.0.1:8765)。Compose 默认仅向本机发布端口，巡查数据保存在命名卷 `records` 中。`docker compose down` 可停止部署并保留数据卷。端口冲突时可在启动前设置 `ORCHARD_PORT`。容器部署与桌面客户端使用独立的数据位置，默认按本机演示方式部署。
 
+如果 Docker Hub 拉取 Python 基础镜像超时，可在启动前指定 Docker 官方 Python 镜像的 ECR Public 地址。
+
+```powershell
+$env:ORCHARD_PYTHON_IMAGE = 'public.ecr.aws/docker/library/python:3.12-slim'
+docker compose up --build -d
+```
+
 ## 浏览器调试
 
 需要 Python 3.10 或更新版本。Python 服务无需安装第三方运行依赖。
