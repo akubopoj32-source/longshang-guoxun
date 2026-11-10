@@ -24,6 +24,7 @@ textarea { width: 100%; resize: vertical; }
 input[type=file] { display: block; max-width: 100%; margin: 0 0 14px; }
 button { border: 1px solid #285a3f; border-radius: 7px; background: #285a3f; color: white; padding: 8px 12px; cursor: pointer; }
 button:disabled { opacity: .55; cursor: wait; }
+.secondary { background: #fff; color: #285a3f; }
 .question { background: #edf4e7; border-left: 3px solid #60854f; padding: 9px; }
 #notice { grid-column: 1 / -1; margin: 0; }
 #notice:empty { display: none; }
@@ -36,6 +37,9 @@ button:disabled { opacity: .55; cursor: wait; }
 .record-item strong, .record-item span { display: block; }
 .record-item span { color: #52665a; font-size: .82rem; margin-top: 3px; }
 .record-item:hover, .record-item[aria-current="true"] { border-color: #285a3f; background: #edf4e7; }
+.evidence-alerts { background: #fff6e1; border-left: 3px solid #9b681c; padding: 10px; margin: 0 0 14px; }
+.evidence-alerts ul { margin: 0; padding-left: 20px; }
+.evidence-alerts a { color: #594015; }
 dt { font-weight: 700; margin-top: 12px; }
 dd { margin: 2px 0 8px; overflow-wrap: anywhere; }
 dd a { display: block; color: #305c46; font-size: .85rem; }

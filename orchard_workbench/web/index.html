@@ -38,7 +38,10 @@
         <textarea id="message" rows="4" maxlength="2000" placeholder="例如：三号点看到两只疑似虫体"></textarea>
         <label for="photo">现场照片（选填，最大 4 MB）</label>
         <input id="photo" type="file" accept="image/jpeg,image/png,image/webp">
-        <button>处理本轮输入</button>
+        <div class="row">
+          <button>处理本轮输入</button>
+          <button id="rules-fallback" type="submit" class="secondary" hidden>用规则保存本轮</button>
+        </div>
       </form>
       <div id="history" hidden>
         <h3>原始证据</h3>
@@ -50,6 +53,10 @@
       <p id="record-status">请选择已有记录，或新建一条巡查记录。</p>
       <dl id="fields"></dl>
       <div id="review" hidden>
+        <section id="evidence-alerts" class="evidence-alerts" aria-labelledby="evidence-title" hidden>
+          <h3 id="evidence-title">图文证据待核对</h3>
+          <ul id="alert-list"></ul>
+        </section>
         <h3>待核实事项</h3>
         <ul id="pending"></ul>
         <details><summary>修订历史</summary><ul id="revisions"></ul></details>

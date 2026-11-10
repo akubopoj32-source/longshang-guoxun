@@ -13,7 +13,7 @@ async function request(path, body) {
   };
   const response = await fetch(path, options);
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "请求失败。");
+  if (!response.ok) throw Object.assign(new Error(data.error || "请求失败。"), { code: data.code });
   return data;
 }
 
@@ -93,6 +93,7 @@ function update(data) {
   renderList();
   $("record-status").textContent = `${task.label} · 第 ${record.version} 版 · ${statusNames[record.status]}`;
   $("turn").hidden = !["draft", "returned"].includes(record.status);
+  $("rules-fallback").hidden = true;
   $("history").hidden = record.turns.length === 0;
   $("review").hidden = record.turns.length === 0;
   $("question").textContent = data.questions[0] || (record.turns.length ? "可以继续补充，或提交复核。" : "请描述现场观察。");
@@ -111,15 +112,27 @@ function update(data) {
   for (const turn of record.turns) {
     const entry = element("article", undefined, "evidence");
     entry.id = `evidence-${turn.id}`;
-    entry.append(element("h3", `第 ${turn.id} 轮`), element("p", turn.message || "仅上传图片"));
+    const source = {model: "图文模型", rules: "本地规则"}[turn.extraction_mode];
+    entry.append(element("h3", source ? `第 ${turn.id} 轮 · ${source}` : `第 ${turn.id} 轮`),
+      element("p", turn.message ? `巡查员原话：${turn.message}` : "仅上传图片"));
     if (turn.image) {
       const image = element("img");
       image.src = turn.image;
       image.alt = `第 ${turn.id} 轮的巡查照片`;
       entry.append(image, element("p", turn.visual ? `模型视觉线索，待人工核对：${turn.visual}` : "已留存原图，当前无视觉提取结果。"));
+      if (turn.visible_count != null) entry.append(element("p", `模型估计照片中可见 ${turn.visible_count} 只，待人工核对。`));
     }
     $("turns").append(entry);
   }
+  const alerts = data.evidence_alerts || [];
+  $("evidence-alerts").hidden = alerts.length === 0;
+  $("alert-list").replaceChildren(...alerts.map((alert) => {
+    const item = element("li", `口述 ${alert.reported} 只，照片估计可见 ${alert.visible} 只。`);
+    const link = element("a", `查看第 ${alert.turn} 轮原话与照片`);
+    link.href = `#evidence-${alert.turn}`;
+    item.append(" ", link);
+    return item;
+  }));
   $("pending").replaceChildren(...(data.pending.length ? data.pending : ["无"]).map((item) => element("li", item)));
   $("revisions").replaceChildren(...record.revisions.filter((change) => change.before).map((change) =>
     element("li", `第 ${change.version} 版 · ${task.fields[change.field]}：${change.before.value} → ${change.after.value}`)));
@@ -147,7 +160,8 @@ async function changeReview(action) {
 
 function exportRecord() {
   const data = {
-    id: state.id, ...state.record, task_label: tasks[state.record.task].label, pending: state.pending,
+    id: state.id, ...state.record, task_label: tasks[state.record.task].label,
+    pending: state.pending, evidence_alerts: state.evidence_alerts,
   };
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}));
   const link = element("a");
@@ -181,11 +195,18 @@ $("new-record").addEventListener("submit", (event) => {
 
 $("turn").addEventListener("submit", (event) => {
   event.preventDefault();
+  const rulesOnly = event.submitter === $("rules-fallback");
   run(async () => {
     const image = await readImage($("photo").files[0]);
-    update(await request(`/api/records/${state.id}/turn`, {
-      message: $("message").value, image, version: state.record.version, status: state.record.status,
-    }));
+    try {
+      update(await request(`/api/records/${state.id}/turn`, {
+        message: $("message").value, image, version: state.record.version,
+        status: state.record.status, rules_only: rulesOnly,
+      }));
+    } catch (error) {
+      if (error.code === "model_unavailable") $("rules-fallback").hidden = false;
+      throw error;
+    }
     $("turn").reset();
     await refreshRecords();
   });

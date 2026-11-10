@@ -8,12 +8,14 @@ import sqlite3
 import sys
 import threading
 import uuid
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .orchard import QUESTIONS, TASKS, apply_turn, model_enabled, new_record, pending_items, review
+from .extraction import ModelUnavailable, model_enabled
+from .orchard import QUESTIONS, TASKS, apply_turn, evidence_alerts, new_record, pending_items, review
 
 
 ROOT = Path(__file__).resolve().parent
@@ -52,6 +54,7 @@ class Workbench(BaseHTTPRequestHandler):
 
     def record_response(self, record_id, record):
         return {"id": record_id, "record": record, "pending": pending_items(record),
+                "evidence_alerts": evidence_alerts(record),
                 "questions": [QUESTIONS[key] for key in record["questions"]]}
 
     def read_json(self):
@@ -65,12 +68,22 @@ class Workbench(BaseHTTPRequestHandler):
             raise ValueError("请求格式不正确。")
         return data
 
+    @contextmanager
+    def database(self):
+        with closing(sqlite3.connect(self.server.db_path)) as db, db:
+            yield db
+
     def load(self, record_id):
-        result = self.server.db.execute("SELECT data FROM records WHERE id = ?", (record_id,)).fetchone()
-        return json.loads(result[0]) if result else None
+        with self.database() as db:
+            result = db.execute("SELECT data FROM records WHERE id = ?", (record_id,)).fetchone()
+        return result[0] if result else None
+
+    def stale_record(self):
+        self.send_json(409, {"error": "记录已在其他页面更新，请刷新后重试。"})
 
     def list_records(self):
-        rows = self.server.db.execute("""
+        with self.database() as db:
+            rows = db.execute("""
             WITH summaries AS (
                 SELECT id, rowid,
                        json_extract(data, '$.task') AS task,
@@ -89,7 +102,7 @@ class Workbench(BaseHTTPRequestHandler):
                    END) AS activity_at
             FROM summaries
             ORDER BY julianday(activity_at) DESC, rowid DESC
-        """)
+            """).fetchall()
         return [{"id": record_id, "task": task, "location": location,
                  "status": status, "activity_at": activity_at}
                 for record_id, task, location, status, activity_at in rows]
@@ -109,11 +122,11 @@ class Workbench(BaseHTTPRequestHandler):
             self.send_json(200, {"records": self.list_records()})
         elif path.startswith("/api/records/"):
             record_id = path.removeprefix("/api/records/")
-            record = self.load(record_id)
-            if record is None:
+            saved = self.load(record_id)
+            if saved is None:
                 self.send_json(404, {"error": "记录不存在。"})
             else:
-                self.send_json(200, self.record_response(record_id, record))
+                self.send_json(200, self.record_response(record_id, json.loads(saved)))
         else:
             self.send_json(404, {"error": "页面不存在。"})
 
@@ -123,6 +136,7 @@ class Workbench(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         try:
             data = self.read_json()
+            saved = None
             if path == "/api/records":
                 task = data.get("task")
                 if not isinstance(task, str):
@@ -134,25 +148,38 @@ class Workbench(BaseHTTPRequestHandler):
                     self.send_json(404, {"error": "接口不存在。"})
                     return
                 record_id, action = pieces[2:]
-                record = self.load(record_id)
-                if record is None:
+                saved = self.load(record_id)
+                if saved is None:
                     self.send_json(404, {"error": "记录不存在。"})
                     return
+                record = json.loads(saved)
                 if data.get("version") != record["version"] or data.get("status") != record["status"]:
-                    self.send_json(409, {"error": "记录已在其他页面更新，请刷新后重试。"})
+                    self.stale_record()
                     return
                 if action == "turn":
-                    apply_turn(record, data.get("message", ""), data.get("image", ""))
+                    rules_only = data.get("rules_only", False)
+                    if not isinstance(rules_only, bool):
+                        raise ValueError("本轮处理方式无效。")
+                    apply_turn(record, data.get("message", ""), data.get("image", ""), rules_only=rules_only)
                 else:
                     operation = data.get("action")
                     if not isinstance(operation, str):
                         raise ValueError("请选择有效的复核操作。")
                     review(record, operation)
             record["updated_at"] = datetime.now(timezone.utc).isoformat()
-            with self.server.db:
-                self.server.db.execute("INSERT OR REPLACE INTO records(id, data) VALUES (?, ?)",
-                                       (record_id, json.dumps(record, ensure_ascii=False)))
+            encoded = json.dumps(record, ensure_ascii=False)
+            with self.database() as db:
+                if saved is None:
+                    db.execute("INSERT INTO records(id, data) VALUES (?, ?)", (record_id, encoded))
+                else:
+                    changed = db.execute("UPDATE records SET data = ? WHERE id = ? AND data = ?",
+                                         (encoded, record_id, saved)).rowcount
+            if saved is not None and not changed:
+                self.stale_record()
+                return
             self.send_json(200, self.record_response(record_id, record))
+        except ModelUnavailable as error:
+            self.send_json(error.status, {"error": str(error), "code": "model_unavailable"})
         except ValueError as error:
             self.send_json(400, {"error": str(error)})
         except (OSError, KeyError, IndexError, TypeError, AttributeError):
@@ -167,11 +194,11 @@ def main():
     parser.add_argument("--exit-on-stdin-close", action="store_true")
     args = parser.parse_args()
     args.db.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(args.db)
-    try:
+    with closing(sqlite3.connect(args.db)) as db, db:
         db.execute("CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
-        with HTTPServer((args.host, args.port), Workbench) as server:
-            server.db = db
+    try:
+        with ThreadingHTTPServer((args.host, args.port), Workbench) as server:
+            server.db_path = args.db
             server.local_token = os.getenv("ORCHARD_LOCAL_TOKEN", "").encode()
             if args.exit_on_stdin_close:
                 def stop_when_parent_exits():
@@ -183,8 +210,6 @@ def main():
             server.serve_forever()
     except KeyboardInterrupt:
         pass
-    finally:
-        db.close()
 
 
 if __name__ == "__main__":
