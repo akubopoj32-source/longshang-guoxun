@@ -33,10 +33,26 @@ python app.py
 
 ## 参赛资料
 
-- [项目策划书](陇上果巡项目策划书.md)
+- [项目策划书](docs/陇上果巡项目策划书.md)
+- [策划书打印版](docs/陇上果巡项目策划书_打印版.pdf)
+- [策划书导师审阅稿](docs/陇上果巡项目策划书_导师审阅稿.pdf)
+- [大赛方案](references/2026年中国算谷人工智能大赛方案.pdf)
 - [大赛官方参赛规则](https://cvaic.qyvtc.cn/rules)
 
+## 目录说明
+
+| 路径 | 内容 |
+|---|---|
+| `app.py` | 本地工作台启动入口 |
+| `orchard_workbench/` | 服务端、巡查规则与网页 |
+| `docs/` | 项目策划书及可打印版本 |
+| `references/` | 赛事方案及庆阳果业公开资料 |
+| `local/` | 本机报名材料、快捷方式和测试产物，Git 忽略 |
+| `.orchard/` | 本机运行数据，Git 忽略 |
+
 ## 庆阳果业参考资料
+
+[已归档的资料文件](references/庆阳果业参考资料)和原始来源如下。
 
 - [庆阳市智慧果业实施意见](https://zgqingyang.gov.cn/Upload/main/pdf/2025/03/20/%E5%BA%86%E9%98%B3%E5%B8%82%E4%BA%BA%E6%B0%91%E6%94%BF%E5%BA%9C%E5%8A%9E%E5%85%AC%E5%AE%A4%E5%85%B3%E4%BA%8E%E4%BE%9D%E6%89%98%E6%95%B0%E5%AD%97%E4%BA%A7%E4%B8%9A%E4%BC%98%E5%8A%BF%E5%8F%91%E5%B1%95%E6%99%BA%E6%85%A7%E6%9E%9C%E4%B8%9A%E7%9A%84%E5%AE%9E%E6%96%BD%E6%84%8F%E8%A7%81.pdf)
 - [宁县智慧果园监管平台绩效自评报告](https://www.ningxian.gov.cn/Upload/czj/InfoPublicity/PublicInformation/File/2025/09/11/202509111117006002.pdf)

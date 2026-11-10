@@ -1,0 +1,2 @@
+# Preserve downloaded source pages byte-for-byte.
+references/**/*.html -text -whitespace
