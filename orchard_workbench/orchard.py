@@ -137,7 +137,8 @@ def apply_candidate(record, candidate, message, turn):
         if before["value"] != value or before["status"] == "conflict":
             value = " / ".join(dict.fromkeys([*before["value"].split(" / "), *value.split(" / ")]))
             status = "conflict"
-        sources = before["evidence"] + sources
+        if not before.get("review_version"):
+            sources = before["evidence"] + sources
     set_field(record, field, {"value": value, "status": status, "evidence": sources})
 
 
@@ -200,7 +201,7 @@ def apply_turn(record, message, image="", extractor=None, *, rules_only=False):
 def evidence_alerts(record):
     """Compare a definite trap count only with a complete photo from the same input."""
     quantity = record["fields"].get("quantity", {})
-    if record["task"] != "trap" or quantity.get("status") != "recorded":
+    if record["task"] != "trap" or quantity.get("status") != "recorded" or quantity.get("review_version"):
         return []
     match = re.fullmatch(r"(\d{1,3}|[零〇一二两三四五六七八九十])\s*只", quantity["value"])
     if not match:
@@ -249,6 +250,43 @@ def review(record, action, note=""):
     if note := note.strip():
         entry["note"] = note
     record["reviews"].append(entry)
+    return record
+
+
+def review_field(record, field, action, value="", note=""):
+    if record["status"] != "pending":
+        raise ValueError("请先将记录提交复核。")
+    if not isinstance(field, str) or field not in TASKS[record["task"]]["fields"]:
+        raise ValueError("请选择有效的复核字段。")
+    if action not in ("confirm", "correct", "mark_unknown"):
+        raise ValueError("请选择有效的字段复核操作。")
+    if not isinstance(note, str) or len(note) > 500:
+        raise ValueError("复核依据须为 500 字以内的文字。")
+    note = note.strip()
+    before = record["fields"].get(field)
+    if action == "confirm":
+        if not before or before["status"] != "recorded":
+            raise ValueError("请填写确认后的值，或将这一项标记为待核实。")
+        value, status = before["value"], "recorded"
+    elif action == "correct":
+        if not isinstance(value, str) or len(value) > 500 or not value.strip() or not note:
+            raise ValueError("请填写更正值和更正依据，两项各不超过 500 字。")
+        value, status = value.strip(), "recorded"
+    else:
+        value, status = "待现场核实", "unknown"
+
+    alerts = evidence_alerts(record) if field == "quantity" else []
+    record["version"] += 1
+    version = record["version"]
+    current = {"value": value, "status": status, "review_version": version,
+               "evidence": before["evidence"] if before else []}
+    set_field(record, field, current)
+    record.setdefault("field_reviews", []).append({
+        "version": version, "field": field, "action": action, "note": note,
+        "before": before, "after": current, "alerts": alerts,
+        "time": datetime.now().astimezone().isoformat(timespec="seconds"),
+    })
+    record["questions"] = next_questions(record)
     return record
 
 

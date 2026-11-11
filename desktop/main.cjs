@@ -1,6 +1,7 @@
-const { app, BrowserWindow, Menu, dialog, session } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, session } = require("electron");
 const { spawn } = require("node:child_process");
 const { randomBytes } = require("node:crypto");
+const { writeFile } = require("node:fs/promises");
 const { join, resolve } = require("node:path");
 const { createInterface } = require("node:readline");
 
@@ -78,13 +79,14 @@ async function openWorkbench() {
     height: 900,
     minWidth: 820,
     minHeight: 600,
-    backgroundColor: "#f3f5ef",
+    backgroundColor: "#ffffff",
     show: false,
     webPreferences: {
       session: desktopSession,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      preload: join(__dirname, "preload.cjs"),
     },
   });
   const guardNavigation = (event, url) => {
@@ -98,6 +100,34 @@ async function openWorkbench() {
   });
   window.on("closed", () => { window = null; });
   window.once("ready-to-show", () => window?.show());
+  ipcMain.handle("orchard:output-checklist", async (event, format, filename) => {
+    const owner = window;
+    if (!owner || event.sender !== owner.webContents || !event.senderFrame
+        || event.senderFrame.parent || new URL(event.senderFrame.url).origin !== origin) {
+      throw new Error("无法输出当前复查单。");
+    }
+    const previewOpen = await owner.webContents.executeJavaScript(
+      "Boolean(document.querySelector('#print-preview[open]'))"
+    );
+    if (!previewOpen) throw new Error("请先打开复查单预览。");
+    if (format === "print") {
+      return new Promise((resolve) => {
+        owner.webContents.print({ pageSize: "A4" }, (success) => resolve(success));
+      });
+    }
+    if (format !== "pdf" || typeof filename !== "string" || !/^巡查复查单-[a-f0-9]{8}-v\d+\.pdf$/.test(filename)) {
+      throw new Error("复查单文件名无效。");
+    }
+    const pdf = await owner.webContents.printToPDF({ pageSize: "A4", preferCSSPageSize: true });
+    const { canceled, filePath } = await dialog.showSaveDialog(owner, {
+      title: "保存巡查复查单",
+      defaultPath: filename,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (canceled || !filePath) return false;
+    await writeFile(filePath, pdf);
+    return true;
+  });
   await window.loadURL(origin);
 }
 

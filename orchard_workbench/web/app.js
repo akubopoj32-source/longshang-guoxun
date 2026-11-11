@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 const statusNames = {draft: "草稿", pending: "待复核", confirmed: "已复核", returned: "已退回"};
 const fieldStates = {recorded: "已记录", unknown: "待核实", conflict: "待核对"};
 const reviewNames = {submit: "提交复核", confirm: "确认记录", return: "退回补充"};
+const fieldReviewNames = {confirm: "确认现值", correct: "人工更正", mark_unknown: "标记为待核实"};
 let tasks;
 let state;
 let records = [];
@@ -70,8 +71,14 @@ async function refreshRecords() {
 }
 
 function canLeaveInput() {
-  return !($("message").value.trim() || $("photo").files.length || $("review-note").value.trim())
+  return !($("message").value.trim() || $("photo").files.length || $("review-note").value.trim()
+    || hasFieldReviewInput())
     || window.confirm("有尚未保存的内容。要放弃这些内容并切换记录吗？");
+}
+
+function hasFieldReviewInput() {
+  return !$("field-review-form").hidden && ($("field-review-note").value.trim()
+    || (!$("field-review-value-panel").hidden && $("field-review-value").value.trim()));
 }
 
 async function run(action) {
@@ -96,6 +103,9 @@ function update(data) {
   if (state?.id !== data.id) {
     $("review-note").value = "";
     $("review-history").open = false;
+    $("field-review-form").reset();
+    $("field-review-key").replaceChildren();
+    $("field-review-history").open = false;
   }
   state = data;
   localStorage.setItem("orchard-last-record", data.id);
@@ -112,7 +122,14 @@ function update(data) {
   $("fields").replaceChildren();
   for (const [key, label] of Object.entries(task.fields)) {
     const field = record.fields[key];
+    const reviewVersion = field?.review_version;
     const details = element("dd", field ? `${field.value} · ${fieldStates[field.status]}` : "待补充");
+    if (reviewVersion) {
+      const link = element("a", `查看第 ${reviewVersion} 版人工判断`);
+      link.href = `#field-review-${reviewVersion}`;
+      link.addEventListener("click", () => { $("field-review-history").open = true; });
+      details.append(link);
+    }
     for (const evidence of field?.evidence || []) {
       const link = element("a", `第 ${evidence.turn} 轮 · ${evidence.quote || "原图"}`);
       link.href = `#evidence-${evidence.turn}`;
@@ -149,6 +166,7 @@ function update(data) {
   $("revisions").replaceChildren(...record.revisions.filter((change) => change.before).map((change) =>
     element("li", `第 ${change.version} 版 · ${task.fields[change.field]}：${change.before.value} → ${change.after.value}`)));
   if (!$("revisions").children.length) $("revisions").append(element("li", "暂无字段修订。"));
+  updateFieldReviews(record, task, alerts);
   $("review-history").hidden = record.reviews.length === 0;
   $("review-entries").replaceChildren(...record.reviews.map((entry) => {
     const time = activityFormat.format(new Date(entry.time));
@@ -168,7 +186,71 @@ function update(data) {
   if (record.status === "confirmed") {
     addAction("导出复核记录", exportRecord);
     addAction("导出复查单（Markdown）", exportChecklist);
+    addAction("预览打印版", openPrintPreview);
   }
+}
+
+function fieldReviewText(entry, task) {
+  const prior = entry.before?.value || "待补充";
+  return `第 ${entry.version} 版 · ${task.fields[entry.field]} · ${fieldReviewNames[entry.action]} · ${prior} → ${entry.after.value}`;
+}
+
+function updateFieldReviews(record, task, alerts) {
+  const history = record.field_reviews || [];
+  $("field-review-history").hidden = history.length === 0;
+  $("field-review-entries").replaceChildren(...history.map((entry) => {
+    const item = element("li", fieldReviewText(entry, task));
+    item.id = `field-review-${entry.version}`;
+    if (entry.note) item.append(element("span", entry.note, "review-note-text"));
+    for (const alert of entry.alerts || []) {
+      const link = element("a", `第 ${alert.turn} 轮口述 ${alert.reported} 只 · 照片估计可见 ${alert.visible} 只`);
+      link.href = `#evidence-${alert.turn}`;
+      item.append(element("br"), link);
+    }
+    return item;
+  }));
+  const form = $("field-review-form");
+  form.hidden = record.status !== "pending";
+  if (form.hidden) return;
+  const select = $("field-review-key");
+  const selected = select.value;
+  select.replaceChildren(...Object.entries(task.fields).map(([key, label]) => {
+    const option = element("option", label);
+    option.value = key;
+    return option;
+  }));
+  if (selected in task.fields) select.value = selected;
+  else if (alerts.length) select.value = "quantity";
+  renderFieldReview();
+}
+
+function renderFieldReview() {
+  const record = state.record;
+  const field = record.fields[$("field-review-key").value];
+  $("field-review-current").textContent = field ? `${field.value} · ${fieldStates[field.status]}` : "该字段尚待补充";
+  const evidence = $("field-review-evidence");
+  evidence.replaceChildren();
+  const sourceTurns = new Set();
+  for (const source of field?.evidence || []) {
+    const link = element("a", `第 ${source.turn} 轮${source.quote ? ` · ${source.quote}` : "原图"}`);
+    link.href = `#evidence-${source.turn}`;
+    evidence.append(link);
+    sourceTurns.add(source.turn);
+  }
+  const pictured = record.turns.findLast((turn) => turn.image && sourceTurns.has(turn.id));
+  if (pictured) {
+    const picture = element("img");
+    picture.src = pictured.image;
+    picture.alt = `第 ${pictured.id} 轮照片预览`;
+    evidence.append(picture);
+  }
+  const action = $("field-review-action");
+  action.options[0].disabled = field?.status !== "recorded";
+  if ((!action.value || action.value === "confirm") && action.options[0].disabled) action.value = "mark_unknown";
+  const correcting = action.value === "correct";
+  $("field-review-value-panel").hidden = !correcting;
+  $("field-review-value").required = correcting;
+  $("field-review-note").required = correcting;
 }
 
 function addAction(label, action) {
@@ -179,6 +261,9 @@ function addAction(label, action) {
 }
 
 async function changeReview(action) {
+  if (hasFieldReviewInput()) {
+    throw new Error("有尚未保存的字段判断，请先保存或清空。");
+  }
   update(await request(`/api/records/${state.id}/review`, {
     action, version: state.record.version, status: state.record.status,
     note: action === "submit" ? "" : $("review-note").value,
@@ -218,6 +303,13 @@ function exportChecklist() {
   for (const alert of state.evidence_alerts || []) {
     lines.push(`- 第 ${alert.turn} 轮口述 ${alert.reported} 只，模型估计照片可见 ${alert.visible} 只。`);
   }
+  if (record.field_reviews?.length) {
+    lines.push("", "## 字段复核历史", "");
+    for (const entry of record.field_reviews) {
+      lines.push(`- ${markdownText(fieldReviewText(entry, task))}`);
+      if (entry.note) lines.push(`  - ${markdownText(entry.note)}`);
+    }
+  }
   lines.push("", "## 复核历史", "");
   for (const entry of record.reviews) {
     lines.push(`- 第 ${entry.version} 版 · ${reviewNames[entry.action]} · ${entry.time}`);
@@ -236,6 +328,57 @@ function download(content, extension, mime) {
   link.download = `巡查记录-${state.id.slice(0, 8)}-v${state.record.version}.${extension}`;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function openPrintPreview() {
+  const record = state.record;
+  const task = tasks[record.task];
+  const sheet = $("print-sheet");
+  const title = element("h1", "果园巡查复查单");
+  title.id = "print-title";
+  sheet.replaceChildren(title, element("p", `记录编号 ${state.id}`),
+    element("p", `${task.label} · 第 ${record.version} 版 · ${statusNames[record.status]}`));
+  const fields = Object.entries(task.fields).map(([key, label]) => {
+    const field = record.fields[key];
+    return field ? `${label}　${field.value}（${fieldStates[field.status]}）` : `${label}　待补充`;
+  });
+  appendPrintList(sheet, "巡查记录", fields);
+  appendPrintList(sheet, "待核实事项", state.pending.length ? state.pending : ["无"]);
+  if (state.evidence_alerts?.length) {
+    appendPrintList(sheet, "图文证据待核对", state.evidence_alerts.map((alert) =>
+      `第 ${alert.turn} 轮口述 ${alert.reported} 只，模型估计照片可见 ${alert.visible} 只。`));
+  }
+  if (record.field_reviews?.length) {
+    appendPrintList(sheet, "字段复核历史", record.field_reviews.flatMap((entry) => {
+      const description = entry.note ? `${fieldReviewText(entry, task)}　${entry.note}` : fieldReviewText(entry, task);
+      const priorAlerts = (entry.alerts || []).map((alert) =>
+        `复核前第 ${alert.turn} 轮口述 ${alert.reported} 只，模型估计照片可见 ${alert.visible} 只。`);
+      return [description, ...priorAlerts];
+    }));
+  }
+  appendPrintList(sheet, "复核历史", record.reviews.map((entry) =>
+    `第 ${entry.version} 版 · ${reviewNames[entry.action]} · ${entry.time}${entry.note ? `　${entry.note}` : ""}`));
+  sheet.append(element("h2", "现场证据"));
+  for (const turn of record.turns) {
+    const figure = element("figure");
+    if (turn.image) {
+      const picture = element("img");
+      picture.src = turn.image;
+      picture.alt = `第 ${turn.id} 轮原图`;
+      figure.append(picture);
+    }
+    figure.append(element("figcaption", `第 ${turn.id} 轮 · ${turn.message || "仅上传照片"}`));
+    sheet.append(figure);
+  }
+  $("print-status").textContent = "";
+  $("save-pdf").hidden = !window.orchardDesktop;
+  $("print-preview").showModal();
+}
+
+function appendPrintList(sheet, heading, lines) {
+  const list = element("ul");
+  list.append(...lines.map((line) => element("li", line)));
+  sheet.append(element("h2", heading), list);
 }
 
 function readImage(file) {
@@ -282,6 +425,52 @@ $("turn").addEventListener("submit", (event) => {
 
 $("record-filter").addEventListener("change", renderList);
 $("record-search").addEventListener("input", renderList);
+$("field-review-key").addEventListener("change", () => {
+  $("field-review-value").value = "";
+  $("field-review-note").value = "";
+  renderFieldReview();
+});
+$("field-review-action").addEventListener("change", renderFieldReview);
+$("field-review-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  run(async () => {
+    const data = await request(`/api/records/${state.id}/field-review`, {
+      field: $("field-review-key").value, action: $("field-review-action").value,
+      value: $("field-review-value").value, note: $("field-review-note").value,
+      version: state.record.version, status: state.record.status,
+    });
+    $("field-review-value").value = "";
+    $("field-review-note").value = "";
+    update(data);
+    await refreshRecords();
+  });
+});
+$("close-preview").addEventListener("click", () => $("print-preview").close());
+$("print-preview").addEventListener("cancel", (event) => {
+  if (busy) event.preventDefault();
+});
+$("print-record").addEventListener("click", () => {
+  if (!window.orchardDesktop) {
+    window.print();
+    return;
+  }
+  run(async () => {
+    try {
+      const printed = await window.orchardDesktop.printChecklist();
+      $("print-status").textContent = printed ? "复查单已发送到打印机。" : "打印取消或未完成。";
+    } catch {
+      $("print-status").textContent = "打印失败，请检查打印机后重试。";
+    }
+  });
+});
+$("save-pdf").addEventListener("click", () => run(async () => {
+  try {
+    const filename = `巡查复查单-${state.id.slice(0, 8)}-v${state.record.version}.pdf`;
+    if (await window.orchardDesktop.saveChecklistPdf(filename)) $("print-status").textContent = "PDF 已保存。";
+  } catch {
+    $("print-status").textContent = "保存 PDF 失败，请检查保存位置后重试。";
+  }
+}));
 
 run(async () => {
   const config = await request("/api/config");

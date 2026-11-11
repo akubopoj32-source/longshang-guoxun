@@ -15,7 +15,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .extraction import ModelUnavailable, model_enabled
-from .orchard import QUESTIONS, TASKS, apply_turn, evidence_alerts, new_record, pending_items, review
+from .orchard import QUESTIONS, TASKS, apply_turn, evidence_alerts, new_record, pending_items, review, review_field
 
 
 ROOT = Path(__file__).resolve().parent
@@ -144,7 +144,7 @@ class Workbench(BaseHTTPRequestHandler):
                 record_id, record = uuid.uuid4().hex, new_record(task)
             else:
                 pieces = path.strip("/").split("/")
-                if len(pieces) != 4 or pieces[:2] != ["api", "records"] or pieces[3] not in {"turn", "review"}:
+                if len(pieces) != 4 or pieces[:2] != ["api", "records"] or pieces[3] not in {"turn", "review", "field-review"}:
                     self.send_json(404, {"error": "接口不存在。"})
                     return
                 record_id, action = pieces[2:]
@@ -161,6 +161,9 @@ class Workbench(BaseHTTPRequestHandler):
                     if not isinstance(rules_only, bool):
                         raise ValueError("本轮处理方式无效。")
                     apply_turn(record, data.get("message", ""), data.get("image", ""), rules_only=rules_only)
+                elif action == "field-review":
+                    review_field(record, data.get("field"), data.get("action"),
+                                 data.get("value", ""), data.get("note", ""))
                 else:
                     operation = data.get("action")
                     if not isinstance(operation, str):
