@@ -70,6 +70,20 @@ python app.py
 
 巡查员原话与照片可见线索分别保存。诱捕监测中，当同轮有明确口述数量且模型认为照片完整、可计数时，数量不同会列入「图文证据待核对」，并关联原话及原图。局部或模糊图优先进入补拍或待核对流程。模型服务失败时，本轮输入保留在表单中，可重试或选择「用规则保存本轮」。规则模式会保存原图，视觉识别留待后续核对。
 
+## 离线开发评测
+
+在项目根目录运行。评测直接调用工作台使用的巡查规则，可在没有模型密钥时运行。
+
+```powershell
+python -m evaluation.run --mode fixture --input multimodal --output 'local/评测结果/模拟图文.json'
+python -m evaluation.run --mode fixture --input text --output 'local/评测结果/模拟纯文本.json'
+python -m evaluation.run --mode rules --input multimodal --output 'local/评测结果/规则图文.json'
+```
+
+`fixture` 模式使用本地文字规则和案例中预先写好的视觉响应，可模拟有限视野、数量差异及异常候选字段。`rules` 模式验证实际的本地规则和照片留存流程。纯文本输入会省略图片。两种模式都在本地运行，结果用于开发验收。真实视觉效果应在接入模型后单独实测。
+
+在 [案例文件](evaluation/cases.json) 中填写任务、输入步骤和预期结果。`expect` 适用于所有运行方式，`expect_by_variant` 可针对 `fixture-multimodal` 等运行方式覆盖预期值。`evaluation/fixtures/` 中的图片是团队自制示意图，用于模拟不同图像条件。输出 JSON 记录每步的字段、追问、修订历史、待核对项和逐项断言，也记录所用案例文件和图片的 SHA-256。断言失败时仍会输出结果，命令以退出码 1 结束。
+
 ## 参赛资料
 
 - [项目策划书](docs/陇上果巡项目策划书.md)
@@ -86,6 +100,7 @@ python app.py
 | `desktop/` | Electron 桌面入口和 Windows 打包脚本 |
 | `Dockerfile`、`compose.yaml` | 服务镜像与本地容器部署 |
 | `orchard_workbench/` | 服务端、巡查规则与网页 |
+| `evaluation/` | 离线评测入口、开发案例和自制示意图 |
 | `docs/` | 项目策划书及可打印版本 |
 | `references/` | 赛事方案及庆阳果业公开资料 |
 | `local/` | 本机报名材料、快捷方式和测试产物，Git 忽略 |
