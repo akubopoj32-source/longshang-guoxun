@@ -1,0 +1,153 @@
+{
+  "cases": [
+    {
+      "id": "trap-correction-review",
+      "task": "trap",
+      "steps": [
+        {
+          "message": "三号点看到两只疑似虫体",
+          "expect": {"fields.location.value": "三号点", "questions": ["time"]}
+        },
+        {
+          "message": "今天上午，刚才说错了，是五号点，没拍照",
+          "expect": {"fields.location.value": "五号点", "fields.photo.value": "未拍摄", "questions": []}
+        },
+        {"review": "submit", "expect": {"status": "pending"}},
+        {"review": "confirm", "expect": {"status": "confirmed"}}
+      ]
+    },
+    {
+      "id": "orchard-explicit-unknown",
+      "task": "orchard",
+      "steps": [
+        {
+          "message": "西坡三号地，靠路入口有几棵树叶子发黄",
+          "expect": {"fields.position.value": "靠路入口", "fields.quantity.status": "unknown", "questions": ["time"]}
+        },
+        {
+          "message": "不知道",
+          "expect": {"fields.time.status": "unknown", "questions": ["photo"]}
+        }
+      ]
+    },
+    {
+      "id": "trap-unresolved-location",
+      "task": "trap",
+      "steps": [
+        {
+          "message": "三号点今天上午看到两只疑似虫体，没拍照",
+          "expect": {"questions": []}
+        },
+        {
+          "message": "五号点",
+          "expect": {"fields.location.status": "conflict", "fields.location.value": "三号点 / 五号点", "questions": ["location"]}
+        },
+        {
+          "message": "更正为五号点",
+          "expect": {"fields.location.status": "recorded", "fields.location.value": "五号点", "questions": []}
+        }
+      ]
+    },
+    {
+      "id": "trap-complete-photo-count-difference",
+      "task": "trap",
+      "steps": [
+        {
+          "message": "三号点今天上午看到两只疑似虫体",
+          "image": "fixtures/trap-complete.png",
+          "fixture": {
+            "visual": "示意图完整显示一个监测区域，其中有三处可数的标记",
+            "photo_quality": "usable",
+            "visible_count": 3,
+            "count_scope": "complete"
+          },
+          "expect": {"fields.quantity.value": "两只", "alerts": [], "questions": ["photo"]},
+          "expect_by_variant": {
+            "fixture-multimodal": {"alerts": [{"reported": 2, "visible": 3, "turn": 1}], "questions": [], "photo_quality": "usable"},
+            "rules-multimodal": {"questions": [], "photo_quality": "unassessed"}
+          }
+        },
+        {
+          "message": "更正为三只",
+          "expect": {"fields.quantity.value": "三只", "alerts": []}
+        }
+      ]
+    },
+    {
+      "id": "trap-partial-photo-scope",
+      "task": "trap",
+      "steps": [
+        {
+          "message": "三号点今天上午看到两只疑似虫体",
+          "image": "fixtures/trap-partial.png",
+          "fixture": {
+            "visual": "画面只覆盖监测区域的一角，可见一处标记",
+            "photo_quality": "usable",
+            "visible_count": 1,
+            "count_scope": "partial"
+          },
+          "expect": {"fields.quantity.value": "两只", "alerts": []}
+        }
+      ]
+    },
+    {
+      "id": "trap-blur-followup",
+      "task": "trap",
+      "steps": [
+        {
+          "message": "三号点今天上午看到两只疑似虫体",
+          "image": "fixtures/trap-blurred.png",
+          "fixture": {
+            "visual": "画面模糊，标记边界无法分辨",
+            "photo_quality": "limited",
+            "count_scope": "unknown"
+          },
+          "expect": {"alerts": [], "questions": ["photo"]},
+          "expect_by_variant": {
+            "fixture-multimodal": {"questions": ["photo_detail"], "photo_quality": "limited"},
+            "rules-multimodal": {"questions": [], "photo_quality": "unassessed"}
+          }
+        },
+        {
+          "message": "没法补拍",
+          "expect": {"alerts": [], "questions": ["photo"]},
+          "expect_by_variant": {
+            "fixture-multimodal": {"questions": [], "pending": ["虫体类别由人工核实", "图片细节或覆盖范围需人工核对"]},
+            "rules-multimodal": {"questions": []}
+          }
+        }
+      ]
+    },
+    {
+      "id": "trap-unsupported-candidates",
+      "task": "trap",
+      "steps": [
+        {
+          "message": "三号点今天上午看到两只疑似虫体，没拍照",
+          "fixture": {
+            "extra_updates": [
+              {"field": "location", "value": "九号点", "quote": "九号点", "status": "recorded"},
+              {"field": "quantity", "value": "七只", "quote": "看到两只疑似虫体", "status": "recorded"}
+            ]
+          },
+          "expect": {"fields.location.value": "三号点", "fields.quantity.value": "两只", "alerts": []}
+        }
+      ]
+    },
+    {
+      "id": "trap-photo-attachment-conflict",
+      "task": "trap",
+      "steps": [
+        {
+          "message": "三号点今天上午看到两只疑似虫体，没拍照",
+          "image": "fixtures/trap-complete.png",
+          "expect": {"fields.photo.status": "recorded", "questions": []},
+          "expect_by_variant": {
+            "fixture-multimodal": {"fields.photo.status": "conflict", "questions": ["photo"]},
+            "rules-multimodal": {"fields.photo.status": "conflict", "questions": ["photo"]}
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>陇上果巡 | 巡查工作台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23285a3f'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <div><p class="eyebrow">庆阳苹果果园巡查</p><h1>陇上果巡</h1></div>
+    <p id="mode" class="mode">正在加载…</p>
+  </header>
+  <main>
+    <p id="notice" role="status" aria-live="polite"></p>
+    <aside class="card record-sidebar" aria-labelledby="list-title">
+      <h2 id="list-title">巡查记录</h2>
+      <label for="record-filter">筛选状态</label>
+      <select id="record-filter">
+        <option value="">全部</option>
+        <option value="pending">待复核</option>
+        <option value="confirmed">已复核</option>
+      </select>
+      <p id="list-empty" role="status">正在加载记录…</p>
+      <ul id="record-list" aria-label="巡查记录列表"></ul>
+    </aside>
+    <section class="card capture" aria-labelledby="capture-title">
+      <h2 id="capture-title">巡查录入</h2>
+      <form id="new-record">
+        <label for="task">任务类型</label>
+        <div class="row"><select id="task" required></select><button>新建记录</button></div>
+      </form>
+      <form id="turn" hidden>
+        <p id="question" class="question" aria-live="polite"></p>
+        <label for="message">现场描述或补充信息</label>
+        <textarea id="message" rows="4" maxlength="2000" placeholder="例如：三号点看到两只疑似虫体"></textarea>
+        <label for="photo">现场照片（选填，最大 4 MB）</label>
+        <input id="photo" type="file" accept="image/jpeg,image/png,image/webp">
+        <div class="row">
+          <button>处理本轮输入</button>
+          <button id="rules-fallback" type="submit" class="secondary" hidden>用规则保存本轮</button>
+        </div>
+      </form>
+      <div id="history" hidden>
+        <h3>原始证据</h3>
+        <div id="turns"></div>
+      </div>
+    </section>
+    <section class="card" aria-labelledby="record-title">
+      <h2 id="record-title">记录与复核</h2>
+      <p id="record-status">请选择已有记录，或新建一条巡查记录。</p>
+      <dl id="fields"></dl>
+      <div id="review" hidden>
+        <section id="evidence-alerts" class="evidence-alerts" aria-labelledby="evidence-title" hidden>
+          <h3 id="evidence-title">图文证据待核对</h3>
+          <ul id="alert-list"></ul>
+        </section>
+        <h3>待核实事项</h3>
+        <ul id="pending"></ul>
+        <details><summary>修订历史</summary><ul id="revisions"></ul></details>
+        <div id="actions" class="row actions"></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
