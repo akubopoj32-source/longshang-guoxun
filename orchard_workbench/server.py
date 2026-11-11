@@ -165,7 +165,7 @@ class Workbench(BaseHTTPRequestHandler):
                     operation = data.get("action")
                     if not isinstance(operation, str):
                         raise ValueError("请选择有效的复核操作。")
-                    review(record, operation)
+                    review(record, operation, data.get("note", ""))
             record["updated_at"] = datetime.now(timezone.utc).isoformat()
             encoded = json.dumps(record, ensure_ascii=False)
             with self.database() as db:

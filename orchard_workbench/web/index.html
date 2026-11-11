@@ -17,11 +17,15 @@
     <p id="notice" role="status" aria-live="polite"></p>
     <aside class="card record-sidebar" aria-labelledby="list-title">
       <h2 id="list-title">巡查记录</h2>
+      <label for="record-search">搜索记录</label>
+      <input id="record-search" type="search" placeholder="点位、任务类型或记录编号">
       <label for="record-filter">筛选状态</label>
       <select id="record-filter">
         <option value="">全部</option>
+        <option value="draft">草稿</option>
         <option value="pending">待复核</option>
         <option value="confirmed">已复核</option>
+        <option value="returned">已退回</option>
       </select>
       <p id="list-empty" role="status">正在加载记录…</p>
       <ul id="record-list" aria-label="巡查记录列表"></ul>
@@ -53,6 +57,7 @@
       <p id="record-status">请选择已有记录，或新建一条巡查记录。</p>
       <dl id="fields"></dl>
       <div id="review" hidden>
+        <p id="return-note" class="evidence-alerts" hidden></p>
         <section id="evidence-alerts" class="evidence-alerts" aria-labelledby="evidence-title" hidden>
           <h3 id="evidence-title">图文证据待核对</h3>
           <ul id="alert-list"></ul>
@@ -60,6 +65,11 @@
         <h3>待核实事项</h3>
         <ul id="pending"></ul>
         <details><summary>修订历史</summary><ul id="revisions"></ul></details>
+        <details id="review-history" hidden><summary>复核历史</summary><ul id="review-entries"></ul></details>
+        <div id="review-note-panel" hidden>
+          <label for="review-note">复核意见（选填）</label>
+          <textarea id="review-note" rows="3" maxlength="500" placeholder="记录核对结论或需补充的内容"></textarea>
+        </div>
         <div id="actions" class="row actions"></div>
       </div>
     </section>

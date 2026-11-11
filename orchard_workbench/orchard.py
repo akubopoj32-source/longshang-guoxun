@@ -232,7 +232,9 @@ def next_questions(record):
     return missing[:1]
 
 
-def review(record, action):
+def review(record, action, note=""):
+    if not isinstance(note, str) or len(note) > 500:
+        raise ValueError("复核意见须为 500 字以内的文字。")
     transitions = {
         ("draft", "submit"): "pending", ("returned", "submit"): "pending",
         ("pending", "confirm"): "confirmed", ("pending", "return"): "returned",
@@ -242,8 +244,11 @@ def review(record, action):
     if not status or not record["turns"]:
         raise ValueError("当前记录不能执行此操作。")
     record["status"] = status
-    record["reviews"].append({"version": record["version"], "action": action, "status": status,
-                              "time": datetime.now().astimezone().isoformat(timespec="seconds")})
+    entry = {"version": record["version"], "action": action, "status": status,
+             "time": datetime.now().astimezone().isoformat(timespec="seconds")}
+    if note := note.strip():
+        entry["note"] = note
+    record["reviews"].append(entry)
     return record
 
 

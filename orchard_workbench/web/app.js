@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const statusNames = {draft: "草稿", pending: "待复核", confirmed: "已复核", returned: "已退回"};
 const fieldStates = {recorded: "已记录", unknown: "待核实", conflict: "待核对"};
+const reviewNames = {submit: "提交复核", confirm: "确认记录", return: "退回补充"};
 let tasks;
 let state;
 let records = [];
@@ -31,9 +32,14 @@ function notify(text, error = false) {
 
 function renderList() {
   const filter = $("record-filter").value;
-  const visible = filter ? records.filter((record) => record.status === filter) : records;
+  const query = $("record-search").value.trim().replace(/^#/, "").toLowerCase();
+  const visible = records.filter((record) => {
+    if (filter && record.status !== filter) return false;
+    return !query || [record.location, tasks[record.task].label, record.id]
+      .some((value) => value?.toLowerCase().includes(query));
+  });
   $("list-empty").hidden = visible.length > 0;
-  $("list-empty").textContent = filter ? "没有符合筛选条件的记录。" : "还没有巡查记录。";
+  $("list-empty").textContent = filter || query ? "没有符合筛选条件的记录。" : "还没有巡查记录。";
   $("record-list").replaceChildren();
   for (const record of visible) {
     const item = element("li");
@@ -64,14 +70,15 @@ async function refreshRecords() {
 }
 
 function canLeaveInput() {
-  return !($("message").value.trim() || $("photo").files.length)
-    || window.confirm("当前输入尚未处理。要放弃这轮输入并切换记录吗？");
+  return !($("message").value.trim() || $("photo").files.length || $("review-note").value.trim())
+    || window.confirm("有尚未保存的内容。要放弃这些内容并切换记录吗？");
 }
 
 async function run(action) {
   if (busy) return;
   busy = true;
   for (const button of document.querySelectorAll("button")) button.disabled = true;
+  $("review-note").disabled = true;
   notify("正在处理…");
   try {
     await action();
@@ -81,10 +88,15 @@ async function run(action) {
   } finally {
     busy = false;
     for (const button of document.querySelectorAll("button")) button.disabled = false;
+    $("review-note").disabled = false;
   }
 }
 
 function update(data) {
+  if (state?.id !== data.id) {
+    $("review-note").value = "";
+    $("review-history").open = false;
+  }
   state = data;
   localStorage.setItem("orchard-last-record", data.id);
   const record = data.record;
@@ -137,11 +149,26 @@ function update(data) {
   $("revisions").replaceChildren(...record.revisions.filter((change) => change.before).map((change) =>
     element("li", `第 ${change.version} 版 · ${task.fields[change.field]}：${change.before.value} → ${change.after.value}`)));
   if (!$("revisions").children.length) $("revisions").append(element("li", "暂无字段修订。"));
+  $("review-history").hidden = record.reviews.length === 0;
+  $("review-entries").replaceChildren(...record.reviews.map((entry) => {
+    const time = activityFormat.format(new Date(entry.time));
+    const item = element("li", `第 ${entry.version} 版 · ${reviewNames[entry.action]} · ${time}`);
+    if (entry.note) item.append(element("span", entry.note, "review-note-text"));
+    return item;
+  }));
+  const lastReview = record.reviews.at(-1);
+  const returnNote = record.status === "returned" ? lastReview?.note : "";
+  $("return-note").hidden = !returnNote;
+  $("return-note").textContent = returnNote ? `退回意见\n${returnNote}` : "";
+  $("review-note-panel").hidden = !["pending", "confirmed"].includes(record.status);
   $("actions").replaceChildren();
   if (["draft", "returned"].includes(record.status)) addAction("提交复核", () => changeReview("submit"));
   if (record.status === "pending") addAction("确认当前版本", () => changeReview("confirm"));
   if (["pending", "confirmed"].includes(record.status)) addAction("退回补充", () => changeReview("return"));
-  if (record.status === "confirmed") addAction("导出复核记录", exportRecord);
+  if (record.status === "confirmed") {
+    addAction("导出复核记录", exportRecord);
+    addAction("导出复查单（Markdown）", exportChecklist);
+  }
 }
 
 function addAction(label, action) {
@@ -154,7 +181,9 @@ function addAction(label, action) {
 async function changeReview(action) {
   update(await request(`/api/records/${state.id}/review`, {
     action, version: state.record.version, status: state.record.status,
+    note: action === "submit" ? "" : $("review-note").value,
   }));
+  $("review-note").value = "";
   await refreshRecords();
 }
 
@@ -163,10 +192,48 @@ function exportRecord() {
     id: state.id, ...state.record, task_label: tasks[state.record.task].label,
     pending: state.pending, evidence_alerts: state.evidence_alerts,
   };
-  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}));
+  download(JSON.stringify(data, null, 2), "json", "application/json");
+}
+
+function markdownText(value) {
+  return String(value).replace(/\s+/g, " ").trim()
+    .replace(/[&<>:\[\]()!*_\x60#~|\\]/g, (character) => `&#${character.charCodeAt(0)};`);
+}
+
+function exportChecklist() {
+  const record = state.record;
+  const task = tasks[record.task];
+  const lines = ["# 果园巡查复查单", "", `记录编号 ${state.id}`,
+    `任务 ${task.label} · 第 ${record.version} 版 · ${statusNames[record.status]}`, "", "## 巡查记录", ""];
+  for (const [key, label] of Object.entries(task.fields)) {
+    const field = record.fields[key];
+    lines.push(field
+      ? `- **${label}** · ${markdownText(field.value)}（${fieldStates[field.status]}）`
+      : `- **${label}** · 待补充`);
+    for (const evidence of field?.evidence || []) {
+      lines.push(`  - 第 ${evidence.turn} 轮${evidence.quote ? `原话「${markdownText(evidence.quote)}」` : "原图"}`);
+    }
+  }
+  lines.push("", "## 待核实事项", "", ...(state.pending.length ? state.pending.map((item) => `- ${markdownText(item)}`) : ["无"]));
+  for (const alert of state.evidence_alerts || []) {
+    lines.push(`- 第 ${alert.turn} 轮口述 ${alert.reported} 只，模型估计照片可见 ${alert.visible} 只。`);
+  }
+  lines.push("", "## 复核历史", "");
+  for (const entry of record.reviews) {
+    lines.push(`- 第 ${entry.version} 版 · ${reviewNames[entry.action]} · ${entry.time}`);
+    if (entry.note) lines.push(`  - ${markdownText(entry.note)}`);
+  }
+  if (record.turns.some((turn) => turn.image)) {
+    lines.push("", "原图可在工作台或同版本 JSON 复核记录中查看。");
+  }
+  download(lines.join("\n") + "\n", "md", "text/markdown;charset=utf-8");
+}
+
+function download(content, extension, mime) {
+  const url = URL.createObjectURL(new Blob([content], {type: mime}));
   const link = element("a");
   link.href = url;
-  link.download = `巡查记录-${state.id.slice(0, 8)}-v${state.record.version}.json`;
+  link.download = `巡查记录-${state.id.slice(0, 8)}-v${state.record.version}.${extension}`;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -189,6 +256,7 @@ $("new-record").addEventListener("submit", (event) => {
     update(await request("/api/records", {task: $("task").value}));
     $("turn").reset();
     $("record-filter").value = "";
+    $("record-search").value = "";
     await refreshRecords();
   });
 });
@@ -213,6 +281,7 @@ $("turn").addEventListener("submit", (event) => {
 });
 
 $("record-filter").addEventListener("change", renderList);
+$("record-search").addEventListener("input", renderList);
 
 run(async () => {
   const config = await request("/api/config");
