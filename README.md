@@ -27,7 +27,7 @@ npm run build:win
 
 小程序负责填写现场描述、拍照或选图、按提示补充字段及提交复核。桌面客户端复核同一条记录，退回意见可在手机刷新后查看。开发版通过同一台电脑上的巡查服务共享记录。
 
-1. 安装[微信开发者工具](https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html)，扫码登录后导入仓库的 `miniprogram/` 目录。本地编译可从测试号开始。用手机扫码预览或真机调试时，使用有相应权限的小程序 AppID。
+1. 安装[微信开发者工具](https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html)，扫码登录后导入仓库的 `miniprogram/` 目录。在导入窗口填写自己有开发权限的小程序 AppID，本地编译也可以选择「测试号」。
 2. 在项目根目录的 PowerShell 启动共享服务。示例端口为 `8875`，数据保存在独立的联调数据库中。
 
    ```powershell

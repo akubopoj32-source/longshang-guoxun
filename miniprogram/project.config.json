@@ -1,5 +1,4 @@
 {
-  "appid": "touristappid",
   "compileType": "miniprogram",
   "projectname": "longshang-guoxun",
   "setting": { "urlCheck": true, "es6": true, "enhance": true }
