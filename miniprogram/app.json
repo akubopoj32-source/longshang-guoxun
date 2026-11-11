@@ -1,0 +1,10 @@
+{
+  "pages": ["pages/index/index", "pages/capture/capture"],
+  "window": {
+    "navigationBarTitleText": "陇上果巡",
+    "navigationBarBackgroundColor": "#214b36",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f3f5ef",
+    "backgroundTextStyle": "dark"
+  }
+}

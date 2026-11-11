@@ -71,9 +71,13 @@ async function refreshRecords() {
 }
 
 function canLeaveInput() {
-  return !($("message").value.trim() || $("photo").files.length || $("review-note").value.trim()
-    || hasFieldReviewInput())
+  return !hasUnsavedInput()
     || window.confirm("有尚未保存的内容。要放弃这些内容并切换记录吗？");
+}
+
+function hasUnsavedInput() {
+  return $("message").value.trim() || $("photo").files.length || $("review-note").value.trim()
+    || hasFieldReviewInput();
 }
 
 function hasFieldReviewInput() {
@@ -425,6 +429,16 @@ $("turn").addEventListener("submit", (event) => {
 
 $("record-filter").addEventListener("change", renderList);
 $("record-search").addEventListener("input", renderList);
+$("refresh-records").addEventListener("click", () => {
+  if (!tasks) return;
+  run(async () => {
+    await refreshRecords();
+    if (state && !hasUnsavedInput()) {
+      const current = await request(`/api/records/${state.id}`);
+      if (!hasUnsavedInput()) update(current);
+    }
+  });
+});
 $("field-review-key").addEventListener("change", () => {
   $("field-review-value").value = "";
   $("field-review-note").value = "";

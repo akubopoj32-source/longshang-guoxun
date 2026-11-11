@@ -23,6 +23,33 @@ npm run build:win
 
 输出位于 `dist/LongshangGuoxun-win32-<架构>/`，分发时提供整个目录。要沿用此前网页模式的记录，可关闭两种运行方式后，将 `.orchard/records.sqlite3` 复制到桌面数据目录。若目标已有记录，请先备份。开发或测试也可用 `ORCHARD_DESKTOP_DB` 指定独立的数据库文件。
 
+## 微信小程序联调
+
+小程序负责填写现场描述、拍照或选图、按提示补充字段及提交复核。桌面客户端复核同一条记录，退回意见可在手机刷新后查看。开发版通过同一台电脑上的巡查服务共享记录。
+
+1. 安装[微信开发者工具](https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html)，扫码登录后导入仓库的 `miniprogram/` 目录。本地编译可从测试号开始。用手机扫码预览或真机调试时，使用有相应权限的小程序 AppID。
+2. 在项目根目录的 PowerShell 启动共享服务。示例端口为 `8875`，数据保存在独立的联调数据库中。
+
+   ```powershell
+   $env:ORCHARD_LOCAL_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(24))"
+   $env:ORCHARD_LOCAL_TOKEN
+   python app.py --host 0.0.0.0 --port 8875 --db 'local/小程序联调/records.sqlite3'
+   ```
+
+3. 电脑模拟器的服务地址可填 `http://127.0.0.1:8875`。真机联调时让手机与电脑连接同一可信 Wi-Fi，在电脑运行 `ipconfig` 查找 Wi-Fi 网卡的 IPv4 地址。若地址是 `192.168.1.10`，小程序里就填 `http://192.168.1.10:8875`。令牌使用上一步生成的值。如果模拟器拦截本地请求，可在开发者工具的本地设置里临时关闭域名校验。真机连不上时，检查 Windows 防火墙是否允许 Python 在专用网络接收连接。[微信小程序局域网文档](https://developers.weixin.qq.com/miniprogram/dev/framework/ability/mDNS.html)
+4. 关闭已经运行的独立桌面客户端。在项目根目录另开一个 PowerShell，填入同一个令牌并启动桌面客户端。首次从源码运行桌面端需要先在 `desktop/` 执行 `npm ci`。
+
+   ```powershell
+   $env:ORCHARD_LOCAL_TOKEN = '粘贴同一个联调令牌'
+   $env:ORCHARD_SHARED_URL = 'http://127.0.0.1:8875'
+   cd desktop
+   npm start
+   ```
+
+5. 在小程序里新建诱捕监测记录，输入模拟描述并选一张示意图。处理输入、补充追问并提交复核。桌面端点击「刷新记录」，用手机详情页的记录编号定位同一条记录。桌面端填写意见并退回后，在小程序详情页点击「刷新」。
+
+联调使用模拟材料，令牌只填在本机和测试小程序中。联调结束后可在服务窗口按 `Ctrl+C` 停止监听。正式发布需要配置 HTTPS 请求域名、用户身份验证和访问权限。[微信小程序网络文档](https://developers.weixin.qq.com/miniprogram/dev/framework/ability/network.html)
+
 ## Docker 部署
 
 ```powershell
@@ -99,6 +126,7 @@ python -m evaluation.run --mode rules --input multimodal --output 'local/评测�
 |---|---|
 | `app.py` | 本地工作台启动入口 |
 | `desktop/` | Electron 桌面入口和 Windows 打包脚本 |
+| `miniprogram/` | 微信小程序采集与复核状态查询 |
 | `Dockerfile`、`compose.yaml` | 服务镜像与本地容器部署 |
 | `orchard_workbench/` | 服务端、巡查规则与网页 |
 | `evaluation/` | 离线评测入口、开发案例和自制示意图 |

@@ -16,7 +16,10 @@
   <main>
     <p id="notice" role="status" aria-live="polite"></p>
     <aside class="card record-sidebar" aria-labelledby="list-title">
-      <h2 id="list-title">巡查记录</h2>
+      <div class="row list-heading">
+        <h2 id="list-title">巡查记录</h2>
+        <button id="refresh-records" class="secondary" type="button">刷新记录</button>
+      </div>
       <label for="record-search">搜索记录</label>
       <input id="record-search" type="search" placeholder="点位、任务类型或记录编号">
       <label for="record-filter">筛选状态</label>

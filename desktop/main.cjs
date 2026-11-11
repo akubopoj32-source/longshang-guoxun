@@ -6,7 +6,8 @@ const { join, resolve } = require("node:path");
 const { createInterface } = require("node:readline");
 
 const project = join(__dirname, "..");
-const token = randomBytes(32).toString("hex");
+const sharedUrl = process.env.ORCHARD_SHARED_URL;
+const token = sharedUrl ? process.env.ORCHARD_LOCAL_TOKEN : randomBytes(32).toString("hex");
 let backend;
 let window;
 let stopping = false;
@@ -57,12 +58,23 @@ function showFailure(message) {
 }
 
 async function openWorkbench() {
-  const origin = await startBackend();
+  let origin;
+  if (sharedUrl) {
+    if (!/^http:\/\/127\.0\.0\.1:\d+\/?$/.test(sharedUrl) || !token) {
+      throw new Error("共享模式需要本机巡查服务地址和访问令牌。请检查 ORCHARD_SHARED_URL 与 ORCHARD_LOCAL_TOKEN。");
+    }
+    origin = new URL(sharedUrl).origin;
+  } else {
+    origin = await startBackend();
+  }
   const health = await fetch(`${origin}/api/health`, {
     headers: { "X-Orchard-Token": token },
     signal: AbortSignal.timeout(5000),
+    redirect: "error",
   });
-  if (!health.ok) throw new Error("巡查服务未通过健康检查。");
+  if (!health.ok || (await health.json()).status !== "ok") {
+    throw new Error("巡查服务未通过健康检查。请检查服务地址和访问令牌。");
+  }
 
   const desktopSession = session.fromPartition("orchard-workbench");
   desktopSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));

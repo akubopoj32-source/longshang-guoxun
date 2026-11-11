@@ -1,0 +1,46 @@
+<view class="screen">
+  <view class="heading">
+    <view class="title">{{title || '巡查详情'}}</view>
+    <button class="secondary compact" wx:if="{{id}}" disabled="{{busy}}" bindtap="refresh">刷新</button>
+  </view>
+  <view wx:if="{{error}}" class="error" aria-role="alert">{{error}}</view>
+
+  <block wx:if="{{status}}">
+    <view class="heading record-meta">
+      <view class="status {{status}}">{{statusLabel}} · 第 {{version}} 版</view>
+      <view class="muted">{{photoCount}} 张已留存照片</view>
+    </view>
+    <view wx:if="{{reviewNote}}" class="review-note">
+      <view class="section-title">复核意见</view>
+      <view class="spaced">{{reviewNote}}</view>
+    </view>
+
+    <view wx:if="{{editable}}" class="card">
+      <view class="question">{{question}}</view>
+      <label class="label" for="message">现场描述</label>
+      <textarea id="message" value="{{message}}" bindinput="editMessage" maxlength="2000" disabled="{{busy}}" placeholder="例如：三号点看到两只疑似虫体" />
+      <image wx:if="{{photo}}" class="photo spaced" mode="aspectFit" src="{{photo}}" aria-label="待上传的巡查照片" />
+      <view class="button-row spaced">
+        <button class="secondary" disabled="{{busy}}" bindtap="attachPhoto">{{photo ? '更换照片' : '拍照或选照片'}}</button>
+        <button wx:if="{{photo}}" class="secondary" disabled="{{busy}}" bindtap="removePhoto">移除</button>
+      </view>
+      <button class="primary spaced" loading="{{busy}}" disabled="{{busy}}" bindtap="saveTurn">处理本轮输入</button>
+      <button wx:if="{{rulesFallback}}" class="secondary spaced" disabled="{{busy}}" bindtap="saveTurn" data-rules="yes">用规则保存本轮</button>
+    </view>
+
+    <view class="card">
+      <view class="section-title">巡查字段</view>
+      <view class="field" wx:for="{{fields}}" wx:key="key">
+        <view class="label">{{item.label}}</view>
+        <view>{{item.value}} <text wx:if="{{item.state}}" class="muted">· {{item.state}}</text></view>
+      </view>
+      <view wx:if="{{pending.length}}" class="spaced">
+        <view class="section-title">待核对</view>
+        <view class="muted field" wx:for="{{pending}}" wx:key="*this">{{item}}</view>
+      </view>
+      <button wx:if="{{canSubmit}}" class="primary spaced" disabled="{{busy}}" bindtap="submitReview">提交电脑端复核</button>
+    </view>
+    <view class="muted record-id">记录编号 {{id}}</view>
+  </block>
+  <view wx:elif="{{busy}}" class="muted">正在读取巡查记录…</view>
+</view>

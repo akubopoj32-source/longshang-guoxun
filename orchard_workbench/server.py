@@ -53,9 +53,21 @@ class Workbench(BaseHTTPRequestHandler):
                           "application/json; charset=utf-8")
 
     def record_response(self, record_id, record):
-        return {"id": record_id, "record": record, "pending": pending_items(record),
-                "evidence_alerts": evidence_alerts(record),
-                "questions": [QUESTIONS[key] for key in record["questions"]]}
+        response = {"id": record_id, "record": record, "pending": pending_items(record),
+                    "questions": [QUESTIONS[key] for key in record["questions"]]}
+        if urlsplit(self.path).query == "view=mobile":
+            latest_review = record["reviews"][-1] if record["reviews"] else {}
+            response["record"] = {
+                "task": record["task"], "version": record["version"], "status": record["status"],
+                "fields": {key: {"value": field["value"], "status": field["status"]}
+                           for key, field in record["fields"].items()},
+                "turn_count": len(record["turns"]),
+                "photo_count": sum(bool(turn["image"]) for turn in record["turns"]),
+                "review_note": latest_review.get("note", ""),
+            }
+        else:
+            response["evidence_alerts"] = evidence_alerts(record)
+        return response
 
     def read_json(self):
         if self.headers.get_content_type() != "application/json":
