@@ -1,0 +1,40 @@
+<view class="screen">
+  <view class="heading">
+    <view class="title">巡查记录</view>
+    <button class="secondary compact" bindtap="toggleSettings">连接设置</button>
+  </view>
+
+  <view wx:if="{{showSettings}}" class="card">
+    <label class="label" for="origin">服务地址</label>
+    <input id="origin" value="{{origin}}" bindinput="editOrigin" disabled="{{busy}}" placeholder="http://192.168.1.10:8765" />
+    <label class="label" for="token">联调令牌</label>
+    <input id="token" value="{{token}}" bindinput="editToken" disabled="{{busy}}" password="{{true}}" />
+    <button class="primary spaced" disabled="{{busy}}" bindtap="connect">连接服务</button>
+  </view>
+
+  <view wx:if="{{error}}" class="error" aria-role="alert">{{error}}</view>
+  <block wx:if="{{connected}}">
+    <view class="card">
+      <view wx:if="{{mode === 'demo'}}" class="muted">规则演示 · 照片留存供人工查看</view>
+      <view wx:else class="muted">图文模型模式 · 仅上传获准使用的材料</view>
+      <picker range="{{tasks}}" range-key="label" value="{{taskIndex}}" bindchange="chooseTask" disabled="{{busy}}">
+        <view class="picker spaced">{{tasks[taskIndex].label}} <text class="muted">更改类型</text></view>
+      </picker>
+      <button class="primary spaced" disabled="{{busy}}" bindtap="createRecord">新建巡查</button>
+    </view>
+
+    <view class="heading list-heading">
+      <view class="section-title">最近更新</view>
+      <button class="secondary compact" disabled="{{busy}}" bindtap="refresh">刷新</button>
+    </view>
+    <view wx:if="{{!records.length}}" class="muted">暂无巡查记录。</view>
+    <view class="card record {{item.status}}" wx:for="{{records}}" wx:key="id" bindtap="openRecord" data-id="{{item.id}}" aria-role="button">
+      <view class="heading">
+        <view class="section-title">{{item.location}}</view>
+        <view class="status">{{item.statusLabel}}</view>
+      </view>
+      <view class="muted">{{item.taskLabel}} · #{{item.shortId}}</view>
+    </view>
+  </block>
+  <view wx:elif="{{busy}}" class="muted">正在连接巡查服务…</view>
+</view>

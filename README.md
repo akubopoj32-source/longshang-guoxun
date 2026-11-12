@@ -23,6 +23,33 @@ npm run build:win
 
 输出位于 `dist/LongshangGuoxun-win32-<架构>/`，分发时提供整个目录。要沿用此前网页模式的记录，可关闭两种运行方式后，将 `.orchard/records.sqlite3` 复制到桌面数据目录。若目标已有记录，请先备份。开发或测试也可用 `ORCHARD_DESKTOP_DB` 指定独立的数据库文件。
 
+## 微信小程序联调
+
+小程序负责填写现场描述、拍照或选图、按提示补充字段及提交复核。桌面客户端复核同一条记录，退回意见可在手机刷新后查看。开发版通过同一台电脑上的巡查服务共享记录。
+
+1. 安装[微信开发者工具](https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html)，扫码登录后导入仓库的 `miniprogram/` 目录。在导入窗口填写自己有开发权限的小程序 AppID，本地编译也可以选择「测试号」。
+2. 在项目根目录的 PowerShell 启动共享服务。示例端口为 `8875`，数据保存在独立的联调数据库中。
+
+   ```powershell
+   $env:ORCHARD_LOCAL_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(24))"
+   $env:ORCHARD_LOCAL_TOKEN
+   python app.py --host 0.0.0.0 --port 8875 --db 'local/小程序联调/records.sqlite3'
+   ```
+
+3. 电脑模拟器的服务地址可填 `http://127.0.0.1:8875`。真机联调时让手机与电脑连接同一可信 Wi-Fi，在电脑运行 `ipconfig` 查找 Wi-Fi 网卡的 IPv4 地址。若地址是 `192.168.1.10`，小程序里就填 `http://192.168.1.10:8875`。令牌使用上一步生成的值。如果模拟器拦截本地请求，可在开发者工具的本地设置里临时关闭域名校验。真机连不上时，检查 Windows 防火墙是否允许 Python 在专用网络接收连接。[微信小程序局域网文档](https://developers.weixin.qq.com/miniprogram/dev/framework/ability/mDNS.html)
+4. 关闭已经运行的独立桌面客户端。在项目根目录另开一个 PowerShell，填入同一个令牌并启动桌面客户端。首次从源码运行桌面端需要先在 `desktop/` 执行 `npm ci`。
+
+   ```powershell
+   $env:ORCHARD_LOCAL_TOKEN = '粘贴同一个联调令牌'
+   $env:ORCHARD_SHARED_URL = 'http://127.0.0.1:8875'
+   cd desktop
+   npm start
+   ```
+
+5. 在小程序里新建诱捕监测记录，输入模拟描述并选一张示意图。处理输入、补充追问并提交复核。桌面端点击「刷新记录」，用手机详情页的记录编号定位同一条记录。桌面端填写意见并退回后，在小程序详情页点击「刷新」。
+
+联调使用模拟材料，令牌只填在本机和测试小程序中。联调结束后可在服务窗口按 `Ctrl+C` 停止监听。正式发布需要配置 HTTPS 请求域名、用户身份验证和访问权限。[微信小程序网络文档](https://developers.weixin.qq.com/miniprogram/dev/framework/ability/network.html)
+
 ## Docker 部署
 
 ```powershell
@@ -47,13 +74,14 @@ docker compose up --build -d
 python app.py
 ```
 
-打开 [本地工作台](http://127.0.0.1:8765)。记录保存在本地 `.orchard/records.sqlite3`，默认只监听本机。左侧可按「全部」「待复核」「已复核」筛选记录，浏览器刷新会恢复最近一次打开的记录。
+打开 [本地工作台](http://127.0.0.1:8765)。记录保存在本地 `.orchard/records.sqlite3`，默认只监听本机。左侧支持按状态筛选，也可搜索点位、任务类型或记录编号。浏览器刷新会恢复最近一次打开的记录。
 
 ### 跑通演示
 
 1. 新建「诱捕监测」记录。输入「三号点看到两只疑似虫体」，可附一张有权使用的图片。
 2. 回答「今天上午，刚才说错了，是五号点」。核对当前点位、原文证据和修订历史。没有图片时可以补充「没拍照」。
-3. 提交复核、确认当前版本，然后导出 JSON。虫体类别仍显示为待核实。
+3. 提交复核。可逐项确认、更正或标记待核实，人工判断会保存到字段复核历史。确认整条记录或退回时可填写复核意见，退回意见会显示在记录详情顶部。
+4. 确认后可导出含原始证据的 JSON、Markdown 复查单，或预览含照片的打印版。Windows 桌面端可从预览窗口另存 A4 PDF。
 
 ### 配置图文模型
 
@@ -70,9 +98,9 @@ python app.py
 
 巡查员原话与照片可见线索分别保存。诱捕监测中，当同轮有明确口述数量且模型认为照片完整、可计数时，数量不同会列入「图文证据待核对」，并关联原话及原图。局部或模糊图优先进入补拍或待核对流程。模型服务失败时，本轮输入保留在表单中，可重试或选择「用规则保存本轮」。规则模式会保存原图，视觉识别留待后续核对。
 
-## 离线开发评测
+## 在本机测试巡查规则
 
-在项目根目录运行。评测直接调用工作台使用的巡查规则，可在没有模型密钥时运行。
+在项目根目录执行以下命令，检查工作台如何提取巡查字段、追问缺项和处理更正。测试在本机运行，无需联网或配置模型服务。
 
 ```powershell
 python -m evaluation.run --mode fixture --input multimodal --output 'local/评测结果/模拟图文.json'
@@ -98,6 +126,7 @@ python -m evaluation.run --mode rules --input multimodal --output 'local/评测�
 |---|---|
 | `app.py` | 本地工作台启动入口 |
 | `desktop/` | Electron 桌面入口和 Windows 打包脚本 |
+| `miniprogram/` | 微信小程序采集与复核状态查询 |
 | `Dockerfile`、`compose.yaml` | 服务镜像与本地容器部署 |
 | `orchard_workbench/` | 服务端、巡查规则与网页 |
 | `evaluation/` | 离线评测入口、开发案例和自制示意图 |

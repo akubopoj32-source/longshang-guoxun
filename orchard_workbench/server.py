@@ -15,7 +15,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .extraction import ModelUnavailable, model_enabled
-from .orchard import QUESTIONS, TASKS, apply_turn, evidence_alerts, new_record, pending_items, review
+from .orchard import QUESTIONS, TASKS, apply_turn, evidence_alerts, new_record, pending_items, review, review_field
 
 
 ROOT = Path(__file__).resolve().parent
@@ -53,9 +53,21 @@ class Workbench(BaseHTTPRequestHandler):
                           "application/json; charset=utf-8")
 
     def record_response(self, record_id, record):
-        return {"id": record_id, "record": record, "pending": pending_items(record),
-                "evidence_alerts": evidence_alerts(record),
-                "questions": [QUESTIONS[key] for key in record["questions"]]}
+        response = {"id": record_id, "record": record, "pending": pending_items(record),
+                    "questions": [QUESTIONS[key] for key in record["questions"]]}
+        if urlsplit(self.path).query == "view=mobile":
+            latest_review = record["reviews"][-1] if record["reviews"] else {}
+            response["record"] = {
+                "task": record["task"], "version": record["version"], "status": record["status"],
+                "fields": {key: {"value": field["value"], "status": field["status"]}
+                           for key, field in record["fields"].items()},
+                "turn_count": len(record["turns"]),
+                "photo_count": sum(bool(turn["image"]) for turn in record["turns"]),
+                "review_note": latest_review.get("note", ""),
+            }
+        else:
+            response["evidence_alerts"] = evidence_alerts(record)
+        return response
 
     def read_json(self):
         if self.headers.get_content_type() != "application/json":
@@ -144,7 +156,7 @@ class Workbench(BaseHTTPRequestHandler):
                 record_id, record = uuid.uuid4().hex, new_record(task)
             else:
                 pieces = path.strip("/").split("/")
-                if len(pieces) != 4 or pieces[:2] != ["api", "records"] or pieces[3] not in {"turn", "review"}:
+                if len(pieces) != 4 or pieces[:2] != ["api", "records"] or pieces[3] not in {"turn", "review", "field-review"}:
                     self.send_json(404, {"error": "接口不存在。"})
                     return
                 record_id, action = pieces[2:]
@@ -161,11 +173,14 @@ class Workbench(BaseHTTPRequestHandler):
                     if not isinstance(rules_only, bool):
                         raise ValueError("本轮处理方式无效。")
                     apply_turn(record, data.get("message", ""), data.get("image", ""), rules_only=rules_only)
+                elif action == "field-review":
+                    review_field(record, data.get("field"), data.get("action"),
+                                 data.get("value", ""), data.get("note", ""))
                 else:
                     operation = data.get("action")
                     if not isinstance(operation, str):
                         raise ValueError("请选择有效的复核操作。")
-                    review(record, operation)
+                    review(record, operation, data.get("note", ""))
             record["updated_at"] = datetime.now(timezone.utc).isoformat()
             encoded = json.dumps(record, ensure_ascii=False)
             with self.database() as db:

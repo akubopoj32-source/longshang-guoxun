@@ -37,7 +37,9 @@ try {
   rmSync(join(resources, "default_app.asar"), { force: true });
   const main = join(resources, "app");
   mkdirSync(main, { recursive: true });
-  for (const file of ["package.json", "main.cjs"]) copyFileSync(join(__dirname, file), join(main, file));
+  for (const file of ["package.json", "main.cjs", "preload.cjs"]) {
+    copyFileSync(join(__dirname, file), join(main, file));
+  }
   cpSync(join(build, "dist", "orchard-backend"), join(resources, "backend"), { recursive: true });
   renameSync(staging, target);
   console.log(join(target, "LongshangGuoxun.exe"));

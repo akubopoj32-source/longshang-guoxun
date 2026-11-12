@@ -1,11 +1,13 @@
-const { app, BrowserWindow, Menu, dialog, session } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, session } = require("electron");
 const { spawn } = require("node:child_process");
 const { randomBytes } = require("node:crypto");
+const { writeFile } = require("node:fs/promises");
 const { join, resolve } = require("node:path");
 const { createInterface } = require("node:readline");
 
 const project = join(__dirname, "..");
-const token = randomBytes(32).toString("hex");
+const sharedUrl = process.env.ORCHARD_SHARED_URL;
+const token = sharedUrl ? process.env.ORCHARD_LOCAL_TOKEN : randomBytes(32).toString("hex");
 let backend;
 let window;
 let stopping = false;
@@ -56,12 +58,23 @@ function showFailure(message) {
 }
 
 async function openWorkbench() {
-  const origin = await startBackend();
+  let origin;
+  if (sharedUrl) {
+    if (!/^http:\/\/127\.0\.0\.1:\d+\/?$/.test(sharedUrl) || !token) {
+      throw new Error("共享模式需要本机巡查服务地址和访问令牌。请检查 ORCHARD_SHARED_URL 与 ORCHARD_LOCAL_TOKEN。");
+    }
+    origin = new URL(sharedUrl).origin;
+  } else {
+    origin = await startBackend();
+  }
   const health = await fetch(`${origin}/api/health`, {
     headers: { "X-Orchard-Token": token },
     signal: AbortSignal.timeout(5000),
+    redirect: "error",
   });
-  if (!health.ok) throw new Error("巡查服务未通过健康检查。");
+  if (!health.ok || (await health.json()).status !== "ok") {
+    throw new Error("巡查服务未通过健康检查。请检查服务地址和访问令牌。");
+  }
 
   const desktopSession = session.fromPartition("orchard-workbench");
   desktopSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
@@ -78,13 +91,14 @@ async function openWorkbench() {
     height: 900,
     minWidth: 820,
     minHeight: 600,
-    backgroundColor: "#f3f5ef",
+    backgroundColor: "#ffffff",
     show: false,
     webPreferences: {
       session: desktopSession,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      preload: join(__dirname, "preload.cjs"),
     },
   });
   const guardNavigation = (event, url) => {
@@ -98,6 +112,34 @@ async function openWorkbench() {
   });
   window.on("closed", () => { window = null; });
   window.once("ready-to-show", () => window?.show());
+  ipcMain.handle("orchard:output-checklist", async (event, format, filename) => {
+    const owner = window;
+    if (!owner || event.sender !== owner.webContents || !event.senderFrame
+        || event.senderFrame.parent || new URL(event.senderFrame.url).origin !== origin) {
+      throw new Error("无法输出当前复查单。");
+    }
+    const previewOpen = await owner.webContents.executeJavaScript(
+      "Boolean(document.querySelector('#print-preview[open]'))"
+    );
+    if (!previewOpen) throw new Error("请先打开复查单预览。");
+    if (format === "print") {
+      return new Promise((resolve) => {
+        owner.webContents.print({ pageSize: "A4" }, (success) => resolve(success));
+      });
+    }
+    if (format !== "pdf" || typeof filename !== "string" || !/^巡查复查单-[a-f0-9]{8}-v\d+\.pdf$/.test(filename)) {
+      throw new Error("复查单文件名无效。");
+    }
+    const pdf = await owner.webContents.printToPDF({ pageSize: "A4", preferCSSPageSize: true });
+    const { canceled, filePath } = await dialog.showSaveDialog(owner, {
+      title: "保存巡查复查单",
+      defaultPath: filename,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (canceled || !filePath) return false;
+    await writeFile(filePath, pdf);
+    return true;
+  });
   await window.loadURL(origin);
 }
 

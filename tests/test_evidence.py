@@ -1,7 +1,7 @@
 import unittest
 
 from orchard_workbench.extraction import Extraction
-from orchard_workbench.orchard import apply_turn, evidence_alerts, new_record
+from orchard_workbench.orchard import apply_turn, evidence_alerts, new_record, pending_items, review, review_field
 
 
 PHOTO = (
@@ -40,3 +40,30 @@ class EvidenceTests(unittest.TestCase):
         record = new_record("trap")
         apply_turn(record, "看到两只疑似虫体", PHOTO, count_extraction("partial"))
         self.assertEqual(evidence_alerts(record), [])
+
+    def test_manual_review_keeps_previous_quantity_and_photo_discrepancy(self):
+        record = new_record("trap")
+        apply_turn(record, "看到两只疑似虫体", PHOTO, count_extraction("complete"))
+        review(record, "submit")
+        review_field(record, "quantity", "mark_unknown", note="待现场清点")
+
+        self.assertEqual(record["version"], 2)
+        self.assertEqual(record["fields"]["quantity"]["status"], "unknown")
+        self.assertIn("观察数量", pending_items(record))
+        entry, = record["field_reviews"]
+        self.assertEqual(entry["before"]["value"], "两只")
+        self.assertEqual(entry["alerts"][0]["visible"], 3)
+        self.assertEqual(record["turns"][0]["image"], PHOTO)
+        review(record, "confirm")
+        self.assertEqual(record["reviews"][-1]["version"], 2)
+
+    def test_correction_requires_evidence_and_preserves_version_on_failure(self):
+        record = new_record("trap")
+        apply_turn(record, "三号点看到两只疑似虫体", rules_only=True)
+        review(record, "submit")
+        with self.assertRaises(ValueError):
+            review_field(record, "location", "correct", "五号点")
+        self.assertEqual(record["version"], 1)
+        review_field(record, "location", "correct", "五号点", "与现场点位标识核对")
+        self.assertEqual(record["fields"]["location"]["value"], "五号点")
+        self.assertEqual(record["field_reviews"][0]["note"], "与现场点位标识核对")

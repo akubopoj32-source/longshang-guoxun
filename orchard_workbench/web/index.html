@@ -16,12 +16,19 @@
   <main>
     <p id="notice" role="status" aria-live="polite"></p>
     <aside class="card record-sidebar" aria-labelledby="list-title">
-      <h2 id="list-title">巡查记录</h2>
+      <div class="row list-heading">
+        <h2 id="list-title">巡查记录</h2>
+        <button id="refresh-records" class="secondary" type="button">刷新记录</button>
+      </div>
+      <label for="record-search">搜索记录</label>
+      <input id="record-search" type="search" placeholder="点位、任务类型或记录编号">
       <label for="record-filter">筛选状态</label>
       <select id="record-filter">
         <option value="">全部</option>
+        <option value="draft">草稿</option>
         <option value="pending">待复核</option>
         <option value="confirmed">已复核</option>
+        <option value="returned">已退回</option>
       </select>
       <p id="list-empty" role="status">正在加载记录…</p>
       <ul id="record-list" aria-label="巡查记录列表"></ul>
@@ -53,16 +60,52 @@
       <p id="record-status">请选择已有记录，或新建一条巡查记录。</p>
       <dl id="fields"></dl>
       <div id="review" hidden>
+        <p id="return-note" class="evidence-alerts" hidden></p>
         <section id="evidence-alerts" class="evidence-alerts" aria-labelledby="evidence-title" hidden>
           <h3 id="evidence-title">图文证据待核对</h3>
           <ul id="alert-list"></ul>
         </section>
         <h3>待核实事项</h3>
         <ul id="pending"></ul>
+        <form id="field-review-form" hidden>
+          <h3>逐项复核</h3>
+          <label for="field-review-key">复核字段</label>
+          <select id="field-review-key"></select>
+          <p id="field-review-current"></p>
+          <div id="field-review-evidence"></div>
+          <label for="field-review-action">处理方式</label>
+          <select id="field-review-action">
+            <option value="confirm">确认现值</option>
+            <option value="correct">人工更正</option>
+            <option value="mark_unknown">标记为待核实</option>
+          </select>
+          <div id="field-review-value-panel" hidden>
+            <label for="field-review-value">更正值</label>
+            <input id="field-review-value" type="text" maxlength="500">
+          </div>
+          <label for="field-review-note">复核依据</label>
+          <textarea id="field-review-note" rows="2" maxlength="500" placeholder="填写判断依据或现场复查事项"></textarea>
+          <button type="submit">保存字段判断</button>
+        </form>
         <details><summary>修订历史</summary><ul id="revisions"></ul></details>
+        <details id="field-review-history" hidden><summary>字段复核历史</summary><ul id="field-review-entries"></ul></details>
+        <details id="review-history" hidden><summary>复核历史</summary><ul id="review-entries"></ul></details>
+        <div id="review-note-panel" hidden>
+          <label for="review-note">复核意见（选填）</label>
+          <textarea id="review-note" rows="3" maxlength="500" placeholder="记录核对结论或需补充的内容"></textarea>
+        </div>
         <div id="actions" class="row actions"></div>
       </div>
     </section>
   </main>
+  <dialog id="print-preview" aria-labelledby="print-title">
+    <div class="print-toolbar row">
+      <button type="button" id="print-record">打印</button>
+      <button type="button" id="save-pdf" hidden>另存 PDF</button>
+      <button type="button" id="close-preview" class="secondary">关闭预览</button>
+      <p id="print-status" role="status"></p>
+    </div>
+    <article id="print-sheet"></article>
+  </dialog>
 </body>
 </html>
