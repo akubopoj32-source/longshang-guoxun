@@ -11,3 +11,4 @@
 - [2026-11-13 电脑端巡查知识库与 RAG](2026-11-13-desktop-knowledge-rag.md)
 - [2026-11-13 扩充苹果果园巡查知识库](2026-11-13-knowledge-orchard-sources.md)
 - [2026-11-13 桌面待复核队列与证据对照](2026-11-13-desktop-review-workspace.md)
+- [2026-11-13 桌面巡查进度、字段查资料与连接恢复](2026-11-13-desktop-progress-knowledge-reconnect.md)

@@ -11,7 +11,12 @@
 <body>
   <header class="app-bar">
     <div class="brand"><span class="brand-mark" aria-hidden="true">陇</span><h1>陇上果巡</h1><span class="app-label">巡查工作台</span></div>
-    <div class="row app-tools"><p id="mode" class="mode" role="status">正在连接…</p><button id="open-knowledge" type="button" class="secondary">知识库</button><button id="toggle-new-record" type="button" aria-expanded="false" aria-controls="new-record">新建巡查</button></div>
+    <div class="row app-tools">
+      <div class="app-status" role="status"><span id="service-status">正在连接巡查服务…</span><span id="mode" class="mode"></span></div>
+      <button id="open-connection" type="button" class="secondary">连接状态</button>
+      <button id="open-knowledge" type="button" class="secondary">知识库</button>
+      <button id="toggle-new-record" type="button" aria-expanded="false" aria-controls="new-record">新建巡查</button>
+    </div>
   </header>
   <main>
     <p id="notice" role="status" aria-live="polite"></p>
@@ -58,6 +63,10 @@
             <div id="actions" class="row actions"></div>
           </div>
           <p id="return-note" class="evidence-alerts" hidden></p>
+          <div id="record-progress" class="record-progress" hidden>
+            <p id="record-next"></p>
+            <ul id="record-unresolved" aria-label="待补充或待核实的字段"></ul>
+          </div>
           <details id="review-note-panel" hidden>
             <summary>复核意见（选填）</summary>
             <label for="review-note" class="sr-only">复核意见</label>
@@ -88,19 +97,24 @@
             </div>
             <form id="turn" hidden>
               <h3>补充巡查</h3>
-              <p id="question" class="question" aria-live="polite"></p>
+              <p id="question" class="question">请描述现场观察。</p>
               <label for="message">现场描述或补充信息</label>
               <textarea id="message" rows="3" maxlength="2000" placeholder="例如：三号点看到两只疑似虫体"></textarea>
               <label for="photo">现场照片（选填，最大 4 MB）</label>
               <input id="photo" type="file" accept="image/jpeg,image/png,image/webp">
+              <p id="turn-feedback" class="turn-feedback" role="status"></p>
               <div class="row">
-                <button>处理本轮输入</button>
+                <button id="submit-turn" type="submit">处理本轮输入</button>
                 <button id="rules-fallback" type="submit" class="secondary" hidden>用规则保存本轮</button>
+                <button id="sync-turn" type="button" class="secondary" hidden>同步记录版本</button>
               </div>
             </form>
           </section>
           <section class="card review-card" aria-labelledby="review-title">
-            <h2 id="review-title">字段复核</h2>
+            <div class="row list-heading">
+              <h2 id="review-title">字段复核</h2>
+              <button id="field-knowledge" type="button" class="secondary compact">查字段资料</button>
+            </div>
             <section id="evidence-alerts" class="evidence-alerts" aria-labelledby="evidence-title" hidden>
               <h3 id="evidence-title">图文数量待核对</h3>
               <ul id="alert-list"></ul>
@@ -133,6 +147,21 @@
       </div>
     </div>
   </main>
+  <dialog id="connection-dialog" class="workbench-dialog" aria-labelledby="connection-title">
+    <div class="row list-heading">
+      <h2 id="connection-title">巡查服务连接</h2>
+      <form method="dialog"><button type="submit" class="secondary">关闭</button></form>
+    </div>
+    <dl class="connection-details">
+      <dt>数据来源</dt><dd id="connection-target"></dd>
+      <dt>服务地址</dt><dd id="connection-address"></dd>
+      <dt>服务状态</dt><dd id="connection-state">正在连接</dd>
+      <dt>提取方式</dt><dd id="connection-model">等待服务配置</dd>
+      <dt>最近刷新</dt><dd id="connection-refresh">尚未刷新</dd>
+    </dl>
+    <p id="connection-feedback" role="status"></p>
+    <button id="retry-connection" type="button">重新连接</button>
+  </dialog>
   <dialog id="photo-dialog" aria-labelledby="photo-title">
     <div class="row photo-toolbar">
       <h2 id="photo-title">原始照片</h2>
@@ -143,11 +172,12 @@
     </div>
     <div id="photo-viewport" tabindex="0" aria-label="照片查看区"><img id="photo-full" alt="巡查原图"></div>
   </dialog>
-  <dialog id="knowledge-dialog" aria-labelledby="knowledge-title">
+  <dialog id="knowledge-dialog" class="workbench-dialog" aria-labelledby="knowledge-title">
     <div class="row list-heading">
       <h2 id="knowledge-title">巡查知识库</h2>
       <form method="dialog"><button type="submit" class="secondary">关闭</button></form>
     </div>
+    <p id="knowledge-context" class="question" hidden></p>
     <form id="knowledge-form">
       <label for="knowledge-question">查询问题</label>
       <textarea id="knowledge-question" rows="2" required minlength="2" maxlength="300" placeholder="例如：诱捕监测需要记录哪些字段？"></textarea>

@@ -3,6 +3,15 @@ const statusNames = {draft: "草稿", pending: "待复核", confirmed: "已复�
 const fieldStates = {recorded: "已记录", unknown: "待核实", conflict: "待核对"};
 const reviewNames = {submit: "提交复核", confirm: "确认记录", return: "退回补充"};
 const fieldReviewNames = {confirm: "确认现值", correct: "人工更正", mark_unknown: "标记为待核实"};
+const fieldQuestions = {
+  trap: "诱捕监测需要记录哪些字段？",
+  orchard: "果园异常巡查需要记录哪些字段？",
+  trapObservation: "诱捕器巡查时，疑似虫体的现场观察如何填写？",
+  orchardObservation: "果园异常巡查如何记录叶片异常和影响范围？",
+  photo: "照片模糊或覆盖不足时怎么补拍和复核？",
+  countConflict: "诱捕监测口述数量与照片数量不一致时怎么人工复核？",
+  unknown: "不知道数量时如何填写巡查记录？",
+};
 let tasks;
 let state;
 let records = [];
@@ -13,6 +22,9 @@ let queueRequest = 0;
 let queueStatus = "pending";
 let selectedField;
 let selectedTurn;
+let mode;
+let connectionState = "connecting";
+let pendingTurn;
 const activityFormat = new Intl.DateTimeFormat("zh-CN", {dateStyle: "short", timeStyle: "short"});
 const dateFormat = new Intl.DateTimeFormat("sv-SE", {year: "numeric", month: "2-digit", day: "2-digit"});
 const syncFormat = new Intl.DateTimeFormat("zh-CN", {hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false});
@@ -21,10 +33,21 @@ async function request(path, body) {
   const options = body === undefined ? {} : {
     method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
   };
-  if (body === undefined) options.signal = AbortSignal.timeout(8000);
-  const response = await fetch(path, options);
-  const data = await response.json();
-  if (!response.ok) throw Object.assign(new Error(data.error || "请求失败。"), { code: data.code });
+  options.signal = AbortSignal.timeout(body === undefined ? 8000 : 45000);
+  let response;
+  let data;
+  try {
+    response = await fetch(path, options);
+    data = await response.json();
+  } catch {
+    const message = "暂未收到巡查服务响应。请打开「连接状态」重试。";
+    showConnection("offline", message);
+    throw Object.assign(new Error(message), {code: "connection"});
+  }
+  if (!response.ok) {
+    if (response.status === 403) showConnection("offline", "访问被拒绝，请检查当前服务的联调令牌。");
+    throw Object.assign(new Error(data.error || "请求失败。"), {code: data.code, status: response.status});
+  }
   return data;
 }
 
@@ -38,6 +61,26 @@ function element(tag, text, className) {
 function notify(text, error = false) {
   $("notice").textContent = text;
   $("notice").className = error ? "error" : "";
+}
+
+function showConnection(status, message = "") {
+  connectionState = status;
+  const labels = {connecting: "正在连接", online: "已连接", offline: "连接异常"};
+  const statusText = labels[status];
+  const text = `${$("connection-target").textContent} · ${statusText}`;
+  if ($("service-status").textContent !== text) $("service-status").textContent = text;
+  $("service-status").dataset.state = status;
+  $("connection-state").textContent = statusText;
+  $("connection-feedback").textContent = message;
+}
+
+function showModelStatus(degraded = false) {
+  const label = degraded ? "图文模型上次处理失败，可用规则保存"
+    : mode === "model" ? "图文模型已配置" : "本地规则模式";
+  $("mode").textContent = label;
+  $("connection-model").textContent = !degraded && mode === "model"
+    ? `${label}。使用模型处理时，本轮输入会发送到已配置的模型服务。`
+    : label;
 }
 
 function renderList() {
@@ -79,7 +122,6 @@ function renderList() {
       if (state?.id === record.id || !canLeaveInput()) return;
       run(async () => {
         update(await request(`/api/records/${record.id}`));
-        $("turn").reset();
       });
     });
     item.append(button);
@@ -112,8 +154,11 @@ async function refreshRecords({background = false} = {}) {
     const changed = JSON.stringify(incoming) !== JSON.stringify(records);
     records = incoming;
     if (changed || !background) renderList();
-    $("queue-sync").textContent = `已刷新 ${syncFormat.format(new Date())}`;
+    const refreshedAt = syncFormat.format(new Date());
+    $("queue-sync").textContent = `已刷新 ${refreshedAt}`;
+    $("connection-refresh").textContent = refreshedAt;
     $("queue-sync").classList.remove("error");
+    if (connectionState !== "online") showConnection("online");
   } catch (error) {
     if (requestId !== queueRequest) return;
     $("queue-sync").textContent = "刷新失败，点击「刷新」重试。";
@@ -130,7 +175,7 @@ function canLeaveInput() {
 }
 
 function hasUnsavedInput() {
-  return $("message").value.trim() || $("photo").files.length || $("review-note").value.trim()
+  return hasTurnInput() || $("review-note").value.trim()
     || hasFieldReviewInput();
 }
 
@@ -155,7 +200,9 @@ async function run(action) {
     busy = false;
     for (const button of document.querySelectorAll("button")) button.disabled = false;
     $("ask-knowledge").disabled = knowledgePending;
+    $("field-knowledge").disabled = knowledgePending;
     for (const input of inputs) input.disabled = false;
+    updateTurnButtons();
   }
 }
 
@@ -169,6 +216,10 @@ function update(data) {
     $("field-review-history").open = false;
     selectedField = undefined;
     selectedTurn = undefined;
+    pendingTurn = undefined;
+    $("turn").reset();
+    $("rules-fallback").hidden = true;
+    setTurnFeedback("");
   }
   state = data;
   localStorage.setItem("orchard-last-record", data.id);
@@ -181,11 +232,12 @@ function update(data) {
   $("record-title").textContent = record.fields.location?.value || "点位待补充";
   $("record-badge").replaceWith(Object.assign(statusBadge(record.status), {id: "record-badge"}));
   $("record-status").textContent = `${task.label} · #${data.id.slice(0, 8)} · 第 ${record.version} 版`;
-  $("turn").hidden = !["draft", "returned"].includes(record.status);
-  $("rules-fallback").hidden = true;
+  $("turn").hidden = !canWriteTurn() && !hasTurnInput();
+  updateTurnButtons();
   $("review").hidden = record.turns.length === 0;
-  $("question").textContent = data.questions[0] || (record.turns.length ? "可以继续补充，或提交复核。" : "请描述现场观察。");
+  $("question").hidden = record.turns.length > 0;
   const alerts = data.evidence_alerts || [];
+  renderProgress(data, task);
   if (switchingRecord && alerts.length) {
     selectedField = "quantity";
     selectedTurn = alerts.at(-1).turn;
@@ -234,6 +286,45 @@ function update(data) {
     addAction("导出复核记录", exportRecord, "secondary");
     addAction("导出复查单（Markdown）", exportChecklist, "secondary");
   }
+}
+
+function canWriteTurn() {
+  return ["draft", "returned"].includes(state?.record.status);
+}
+
+function hasTurnInput() {
+  return $("message").value.trim() || $("photo").files.length;
+}
+
+function updateTurnButtons() {
+  $("submit-turn").disabled = busy || !canWriteTurn() || !hasTurnInput() || Boolean(pendingTurn);
+  $("rules-fallback").disabled = $("submit-turn").disabled;
+  $("sync-turn").hidden = !pendingTurn;
+}
+
+function setTurnFeedback(message, status = "") {
+  const feedback = $("turn-feedback");
+  feedback.textContent = message;
+  feedback.dataset.state = status;
+  feedback.classList.toggle("error", status === "error");
+}
+
+function renderProgress({record, pending, questions}, task) {
+  const hasCountConflict = state.evidence_alerts?.length;
+  const statuses = Object.entries(task.fields).map(([key, label]) => {
+    const status = key === "quantity" && hasCountConflict ? "conflict" : record.fields[key]?.status;
+    return {label, text: fieldStates[status] || "待补充", complete: status === "recorded"};
+  });
+  const next = {
+    draft: questions[0] || (pending.length ? "可补充现场信息，或将待核实事项一并提交。" : "可以提交复核。"),
+    returned: questions[0] || "请按退回意见补充证据，再提交复核。",
+    pending: pending.length ? "请核对证据与待核实事项，再确认或退回。" : "请核对证据后确认当前版本。",
+    confirmed: "可预览或导出本版复查单。",
+  };
+  $("record-progress").hidden = false;
+  $("record-next").textContent = `已记录 ${statuses.filter((item) => item.complete).length}/${statuses.length} 项 · ${next[record.status]}`;
+  $("record-unresolved").replaceChildren(...statuses.filter((item) => !item.complete).map((item) =>
+    element("li", `${item.label} · ${item.text}`, "badge badge-pending")));
 }
 
 function renderFields(task, record, alerts) {
@@ -364,6 +455,9 @@ function addAction(label, action, className) {
 }
 
 async function changeReview(action) {
+  if (action === "submit" && hasTurnInput()) {
+    throw new Error("本轮还有未保存的输入，请先处理或清空后再提交复核。");
+  }
   if (hasFieldReviewInput()) {
     throw new Error("有尚未保存的字段判断，请先保存或清空。");
   }
@@ -514,34 +608,80 @@ $("new-record").addEventListener("submit", (event) => {
   if (!canLeaveInput()) return;
   run(async () => {
     update(await request("/api/records", {task: $("task").value}));
-    $("turn").reset();
     toggleNewRecord(false);
     selectQueue("draft", true);
     await refreshRecords();
   });
 });
 
+async function finishTurn(data) {
+  pendingTurn = undefined;
+  $("turn").reset();
+  $("rules-fallback").hidden = true;
+  selectedTurn = data.record.turns.at(-1).id;
+  update(data);
+  const saved = `本轮已保存 · 第 ${data.record.version} 版`;
+  setTurnFeedback(saved, "saved");
+  await refreshRecords().catch(() => {});
+}
+
 $("turn").addEventListener("submit", (event) => {
   event.preventDefault();
+  if (!canWriteTurn() || !hasTurnInput() || pendingTurn) return;
   const rulesOnly = event.submitter === $("rules-fallback");
   run(async () => {
-    const image = await readImage($("photo").files[0]);
+    setTurnFeedback(rulesOnly ? "正在用本地规则整理本轮…" : "正在整理本轮输入…");
+    let payload;
+    let data;
     try {
-      const data = await request(`/api/records/${state.id}/turn`, {
-        message: $("message").value, image, version: state.record.version,
+      payload = {
+        message: $("message").value.trim(), image: await readImage($("photo").files[0]), version: state.record.version,
         status: state.record.status, rules_only: rulesOnly,
-      });
-      selectedTurn = data.record.turns.at(-1).id;
-      update(data);
+      };
+      data = await request(`/api/records/${state.id}/turn`, payload);
     } catch (error) {
-      if (error.code === "model_unavailable") $("rules-fallback").hidden = false;
-      throw error;
+      if (error.code === "model_unavailable") {
+        $("rules-fallback").hidden = false;
+        showModelStatus(true);
+        setTurnFeedback(`${error.message} 本轮输入已保留，可重试模型或用规则保存。`, "error");
+      } else if (error.code === "connection" || error.status === 409) {
+        pendingTurn = {payload, length: state.record.turns.length, uncertain: error.code === "connection"};
+        setTurnFeedback("本轮输入已保留。请先同步记录版本，核对保存状态。", "error");
+      } else {
+        setTurnFeedback(error.message, "error");
+      }
+      return;
     }
-    $("turn").reset();
-    await refreshRecords();
-    return `已保存第 ${state.record.version} 版。`;
+    if (!rulesOnly) showModelStatus();
+    return finishTurn(data);
   });
 });
+
+for (const id of ["message", "photo"]) $(id).addEventListener("input", () => {
+  if (!pendingTurn) setTurnFeedback(hasTurnInput() ? "本轮尚未保存。" : "");
+  updateTurnButtons();
+  if (!canWriteTurn() && !hasTurnInput()) $("turn").hidden = true;
+});
+
+$("sync-turn").addEventListener("click", () => run(async () => {
+  try {
+    const latest = await request(`/api/records/${state.id}`);
+    const {payload, length, uncertain} = pendingTurn;
+    const saved = latest.record.turns[length];
+    if (uncertain && saved?.message === payload.message && (saved.image || "") === payload.image
+        && $("message").value.trim() === payload.message && await readImage($("photo").files[0]) === payload.image) {
+      return await finishTurn(latest);
+    }
+    // Retrying the same version is protected by the server's compare-and-save.
+    pendingTurn = undefined;
+    update(latest);
+    if (canWriteTurn()) setTurnFeedback("已同步版本。本轮输入已保留，请核对记录后重试。");
+    else setTurnFeedback("记录已进入复核。本轮输入仍在，可复制留存。", "error");
+    await refreshRecords().catch(() => {});
+  } catch (error) {
+    setTurnFeedback(error.message, "error");
+  }
+}));
 
 $("queue-tabs").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-status]");
@@ -550,8 +690,8 @@ $("queue-tabs").addEventListener("click", (event) => {
 for (const id of ["record-task", "record-date"]) $(id).addEventListener("change", () => tasks && renderList());
 $("record-search").addEventListener("input", () => tasks && renderList());
 $("refresh-records").addEventListener("click", () => {
-  if (!tasks) return;
   run(async () => {
+    if (!tasks) return connectWorkbench();
     await refreshRecords();
     if (state && !hasUnsavedInput()) {
       const current = await request(`/api/records/${state.id}`);
@@ -559,6 +699,9 @@ $("refresh-records").addEventListener("click", () => {
     }
   });
 });
+
+$("open-connection").addEventListener("click", () => $("connection-dialog").showModal());
+$("retry-connection").addEventListener("click", () => run(() => connectWorkbench(true)));
 $("evidence-turn").addEventListener("change", () => {
   selectedTurn = Number($("evidence-turn").value);
   renderEvidence();
@@ -596,11 +739,36 @@ $("field-review-form").addEventListener("submit", (event) => {
   });
 });
 $("close-preview").addEventListener("click", () => $("print-preview").close());
-$("open-knowledge").addEventListener("click", () => $("knowledge-dialog").showModal());
+$("open-knowledge").addEventListener("click", () => {
+  $("knowledge-context").hidden = true;
+  $("knowledge-dialog").showModal();
+});
+$("field-knowledge").addEventListener("click", () => {
+  if (knowledgePending) return;
+  const record = state.record;
+  const field = record.fields[selectedField];
+  const label = tasks[record.task].fields[selectedField];
+  let question = fieldQuestions[record.task];
+  if (selectedField === "observation") {
+    question = record.task === "trap" ? fieldQuestions.trapObservation : fieldQuestions.orchardObservation;
+  }
+  if (selectedField === "photo") question = fieldQuestions.photo;
+  if (selectedField === "quantity") {
+    if (state.evidence_alerts?.length) question = fieldQuestions.countConflict;
+    else if (record.task === "trap" && field?.status === "unknown") question = fieldQuestions.unknown;
+  }
+  $("knowledge-context").hidden = false;
+  $("knowledge-context").textContent = `当前字段 · ${label}。问题可编辑，点击「查询资料」后发送。`;
+  $("knowledge-question").value = question;
+  $("knowledge-answer").textContent = "";
+  $("knowledge-sources").replaceChildren();
+  $("knowledge-dialog").showModal();
+});
 $("knowledge-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (busy || knowledgePending) return;
   knowledgePending = true;
+  $("field-knowledge").disabled = true;
   const button = $("ask-knowledge");
   const input = $("knowledge-question");
   button.disabled = true;
@@ -631,6 +799,7 @@ $("knowledge-form").addEventListener("submit", async (event) => {
     knowledgePending = false;
     input.readOnly = false;
     button.disabled = busy;
+    $("field-knowledge").disabled = busy;
   }
 });
 $("print-preview").addEventListener("cancel", (event) => {
@@ -659,22 +828,41 @@ $("save-pdf").addEventListener("click", () => run(async () => {
   }
 }));
 
-run(async () => {
-  const config = await request("/api/config");
-  tasks = config.tasks;
-  $("mode").textContent = config.mode === "model"
-    ? "图文模型模式 · 输入将发送到已配置的模型服务"
-    : "规则演示 · 支持上传和查看原图，未启用图像识别";
-  for (const [key, task] of Object.entries(tasks)) {
-    $("task").add(new Option(task.label, key));
-    $("record-task").add(new Option(task.label, key));
+async function connectWorkbench(checkDesktop = false) {
+  showConnection("connecting", checkDesktop ? "正在检查巡查服务…" : "");
+  try {
+    if (checkDesktop && window.orchardDesktop?.reconnect) {
+      const result = await window.orchardDesktop.reconnect();
+      if (!result.ok) throw new Error(result.message);
+    }
+    const config = await request("/api/config");
+    if (!tasks) {
+      for (const [key, task] of Object.entries(config.tasks)) {
+        $("task").add(new Option(task.label, key));
+        $("record-task").add(new Option(task.label, key));
+      }
+    }
+    tasks = config.tasks;
+    mode = config.mode;
+    showModelStatus();
+    await refreshRecords();
+    if (!state && !hasUnsavedInput()) {
+      const previous = localStorage.getItem("orchard-last-record");
+      const pending = records.filter((record) => record.status === "pending");
+      const next = pending.find((record) => record.id === previous) || pending[0];
+      if (next) update(await request(`/api/records/${next.id}`));
+    }
+    if (checkDesktop) $("connection-feedback").textContent = "巡查服务已重新连接。";
+  } catch (error) {
+    showConnection("offline", error.message);
+    throw error;
   }
-  await refreshRecords();
-  const previous = localStorage.getItem("orchard-last-record");
-  const pending = records.filter((record) => record.status === "pending");
-  const next = pending.find((record) => record.id === previous) || pending[0];
-  if (next) update(await request(`/api/records/${next.id}`));
-});
+}
+
+const sourceLabels = {local: "本地库", shared: "共享库"};
+$("connection-target").textContent = sourceLabels[window.orchardDesktop?.connectionMode] || "浏览器连接";
+$("connection-address").textContent = window.location.origin;
+run(connectWorkbench);
 
 setInterval(() => {
   if (tasks) refreshRecords({background: true});
