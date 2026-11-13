@@ -26,7 +26,8 @@ try {
   const result = spawnSync(process.env.ORCHARD_PYTHON || "python", [
     "-m", "PyInstaller", "--noconfirm", "--onedir", "--name", "orchard-backend",
     "--workpath", join(build, "work"), "--distpath", join(build, "dist"),
-    "--specpath", build, "--add-data", `${join(root, "orchard_workbench", "web")}:orchard_workbench/web`, "app.py",
+    "--specpath", build, "--add-data", `${join(root, "orchard_workbench", "web")}:orchard_workbench/web`,
+    "--add-data", `${join(root, "orchard_workbench", "knowledge.json")}:orchard_workbench`, "app.py",
   ], { cwd: root, stdio: "inherit" });
   if (result.error || result.status !== 0) throw result.error || new Error("Python 服务打包失败。");
 

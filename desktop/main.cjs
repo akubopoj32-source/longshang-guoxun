@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, ipcMain, session } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, session, shell } = require("electron");
 const { spawn } = require("node:child_process");
 const { randomBytes } = require("node:crypto");
 const { writeFile } = require("node:fs/promises");
@@ -106,7 +106,21 @@ async function openWorkbench() {
   };
   window.webContents.on("will-navigate", guardNavigation);
   window.webContents.on("will-redirect", guardNavigation);
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    const target = new URL(url);
+    if (target.origin === origin && target.pathname === "/api/knowledge/source") {
+      fetch(target, { headers: { "X-Orchard-Token": token }, redirect: "manual", signal: AbortSignal.timeout(5000) })
+        .then((response) => {
+          const location = response.headers.get("location");
+          if (response.status !== 302 || !location || new URL(location).protocol !== "https:") {
+            throw new Error("资料原文地址不可用。");
+          }
+          return shell.openExternal(location);
+        })
+        .catch(() => dialog.showErrorBox("知识库", "无法打开资料原文，请稍后重试。"));
+    }
+    return { action: "deny" };
+  });
   window.webContents.on("render-process-gone", (_event, details) => {
     showFailure(`工作台界面已停止（${details.reason}）。请重新启动陇上果巡。`);
   });

@@ -7,6 +7,7 @@ let tasks;
 let state;
 let records = [];
 let busy = false;
+let knowledgePending = false;
 const activityFormat = new Intl.DateTimeFormat("zh-CN", {dateStyle: "short", timeStyle: "short"});
 
 async function request(path, body) {
@@ -460,6 +461,43 @@ $("field-review-form").addEventListener("submit", (event) => {
   });
 });
 $("close-preview").addEventListener("click", () => $("print-preview").close());
+$("open-knowledge").addEventListener("click", () => $("knowledge-dialog").showModal());
+$("knowledge-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (busy || knowledgePending) return;
+  knowledgePending = true;
+  const button = $("ask-knowledge");
+  const input = $("knowledge-question");
+  button.disabled = true;
+  input.readOnly = true;
+  const answer = $("knowledge-answer");
+  answer.className = "";
+  answer.textContent = "正在查询资料…";
+  $("knowledge-sources").replaceChildren();
+  try {
+    const result = await request("/api/knowledge/ask", {question: input.value});
+    answer.textContent = result.answer;
+    for (const source of result.sources) {
+      const item = element("li");
+      item.append(element("strong", source.source), element("p", source.section), element("p", source.text));
+      if (source.url) {
+        const link = element("a", "打开原文");
+        link.href = `/api/knowledge/source?id=${encodeURIComponent(source.id)}`;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        item.append(link);
+      }
+      $("knowledge-sources").append(item);
+    }
+  } catch (error) {
+    answer.textContent = error.message;
+    answer.className = "error";
+  } finally {
+    knowledgePending = false;
+    input.readOnly = false;
+    button.disabled = busy;
+  }
+});
 $("print-preview").addEventListener("cancel", (event) => {
   if (busy) event.preventDefault();
 });

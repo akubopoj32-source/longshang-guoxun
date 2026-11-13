@@ -11,9 +11,10 @@ import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from .extraction import ModelUnavailable, model_enabled
+from .knowledge import answer_question, source_url
 from .orchard import QUESTIONS, TASKS, apply_turn, evidence_alerts, new_record, pending_items, review, review_field
 from .storage import RecordStore
 
@@ -101,7 +102,8 @@ class Workbench(BaseHTTPRequestHandler):
             self.database_error(error)
 
     def get_resource(self):
-        path = urlsplit(self.path).path
+        target = urlsplit(self.path)
+        path = target.path
         if path in ASSETS:
             filename, mime = ASSETS[path]
             self.send_content(200, (ROOT / "web" / filename).read_bytes(), mime)
@@ -110,6 +112,17 @@ class Workbench(BaseHTTPRequestHandler):
         elif path == "/api/health":
             self.server.store.check()
             self.send_json(200, {"status": "ok"})
+        elif path == "/api/knowledge/source":
+            ids = parse_qs(target.query).get("id", [])
+            url = source_url(ids[0]) if len(ids) == 1 else None
+            if url is None:
+                self.send_json(404, {"error": "资料来源不存在。"})
+                return
+            self.send_response(302)
+            self.send_header("Location", url)
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
         elif path == "/api/records":
             self.send_json(200, {"records": self.server.store.list_records()})
         elif path.startswith("/api/records/"):
@@ -128,6 +141,9 @@ class Workbench(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         try:
             data = self.read_json()
+            if path == "/api/knowledge/ask":
+                self.send_json(200, answer_question(data.get("question")))
+                return
             write_version = None
             if path == "/api/records":
                 task = data.get("task")

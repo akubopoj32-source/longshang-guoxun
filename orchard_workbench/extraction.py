@@ -47,6 +47,14 @@ def extract_with_model(record, fields, message, image):
     content = [{"type": "text", "text": json.dumps(context, ensure_ascii=False)}]
     if image:
         content.append({"type": "image_url", "image_url": {"url": image}})
+    result = request_model_json(prompt, content)
+    if not isinstance(result.get("updates"), list):
+        raise ModelUnavailable("模型未返回可解析的巡查结果，请重试或用规则保存本轮。")
+    return Extraction(result["updates"], result.get("visual"), result.get("photo_quality"),
+                      result.get("visible_count"), result.get("count_scope"))
+
+
+def request_model_json(prompt, content):
     payload = {"model": os.environ["ORCHARD_MODEL"], "messages": [
         {"role": "system", "content": prompt}, {"role": "user", "content": content},
     ]}
@@ -65,8 +73,8 @@ def extract_with_model(record, fields, message, image):
         output = envelope["choices"][0]["message"]["content"].strip()
         output = re.sub(r"^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$", "", output)
         result = json.loads(output)
-        if not isinstance(result, dict) or not isinstance(result.get("updates"), list):
-            raise ValueError("Unexpected extraction payload")
+        if not isinstance(result, dict):
+            raise ValueError("Expected a JSON object")
     except HTTPError as error:
         if error.code in (401, 403):
             raise ModelUnavailable("模型服务拒绝访问，请检查本机的模型密钥和权限。") from error
@@ -78,7 +86,5 @@ def extract_with_model(record, fields, message, image):
             raise ModelUnavailable("等待模型响应超时，请重试。", 504) from error
         raise ModelUnavailable("无法连接模型服务，请检查服务地址和网络。") from error
     except (ValueError, KeyError, IndexError, TypeError, AttributeError) as error:
-        raise ModelUnavailable("模型未返回可解析的巡查结果，请重试或用规则保存本轮。") from error
-
-    return Extraction(result["updates"], result.get("visual"), result.get("photo_quality"),
-                      result.get("visible_count"), result.get("count_scope"))
+        raise ModelUnavailable("模型未返回可解析的结果，请重试。") from error
+    return result
