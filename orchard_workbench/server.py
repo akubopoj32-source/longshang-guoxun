@@ -8,7 +8,6 @@ import sqlite3
 import sys
 import threading
 import uuid
-from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,6 +15,7 @@ from urllib.parse import urlsplit
 
 from .extraction import ModelUnavailable, model_enabled
 from .orchard import QUESTIONS, TASKS, apply_turn, evidence_alerts, new_record, pending_items, review, review_field
+from .storage import RecordStore
 
 
 ROOT = Path(__file__).resolve().parent
@@ -80,48 +80,27 @@ class Workbench(BaseHTTPRequestHandler):
             raise ValueError("请求格式不正确。")
         return data
 
-    @contextmanager
-    def database(self):
-        with closing(sqlite3.connect(self.server.db_path)) as db, db:
-            yield db
-
-    def load(self, record_id):
-        with self.database() as db:
-            result = db.execute("SELECT data FROM records WHERE id = ?", (record_id,)).fetchone()
-        return result[0] if result else None
-
     def stale_record(self):
         self.send_json(409, {"error": "记录已在其他页面更新，请刷新后重试。"})
 
-    def list_records(self):
-        with self.database() as db:
-            rows = db.execute("""
-            WITH summaries AS (
-                SELECT id, rowid,
-                       json_extract(data, '$.task') AS task,
-                       json_extract(data, '$.fields.location.value') AS location,
-                       json_extract(data, '$.status') AS status,
-                       json_extract(data, '$.updated_at') AS updated_at,
-                       json_extract(data, '$.turns[#-1].time') AS last_turn,
-                       json_extract(data, '$.reviews[#-1].time') AS last_review
-                FROM records
-            )
-            SELECT id, task, location, status,
-                   COALESCE(updated_at, CASE
-                       WHEN COALESCE(julianday(last_review), 0) >= COALESCE(julianday(last_turn), 0)
-                       THEN COALESCE(last_review, last_turn)
-                       ELSE last_turn
-                   END) AS activity_at
-            FROM summaries
-            ORDER BY julianday(activity_at) DESC, rowid DESC
-            """).fetchall()
-        return [{"id": record_id, "task": task, "location": location,
-                 "status": status, "activity_at": activity_at}
-                for record_id, task, location, status, activity_at in rows]
+    def database_error(self, error):
+        code = getattr(error, "sqlite_errorcode", 0) & 0xFF
+        # Python 3.10 exposes lock failures via the error message.
+        if code in (5, 6) or str(error).startswith(("database is locked", "database table is locked", "database schema is locked")):
+            self.send_json(503, {"error": "巡查数据库繁忙，请稍后重试。", "code": "database_busy"})
+        else:
+            self.log_error("Database error: %s", error)
+            self.send_json(500, {"error": "巡查数据库无法访问，请检查存储后重试。", "code": "database_unavailable"})
 
     def do_GET(self):
         if not self.authorized():
             return
+        try:
+            self.get_resource()
+        except sqlite3.Error as error:
+            self.database_error(error)
+
+    def get_resource(self):
         path = urlsplit(self.path).path
         if path in ASSETS:
             filename, mime = ASSETS[path]
@@ -129,16 +108,17 @@ class Workbench(BaseHTTPRequestHandler):
         elif path == "/api/config":
             self.send_json(200, {"tasks": TASKS, "mode": "model" if model_enabled() else "demo"})
         elif path == "/api/health":
+            self.server.store.check()
             self.send_json(200, {"status": "ok"})
         elif path == "/api/records":
-            self.send_json(200, {"records": self.list_records()})
+            self.send_json(200, {"records": self.server.store.list_records()})
         elif path.startswith("/api/records/"):
             record_id = path.removeprefix("/api/records/")
-            saved = self.load(record_id)
+            saved = self.server.store.load(record_id)
             if saved is None:
                 self.send_json(404, {"error": "记录不存在。"})
             else:
-                self.send_json(200, self.record_response(record_id, json.loads(saved)))
+                self.send_json(200, self.record_response(record_id, saved[0]))
         else:
             self.send_json(404, {"error": "页面不存在。"})
 
@@ -148,7 +128,7 @@ class Workbench(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         try:
             data = self.read_json()
-            saved = None
+            write_version = None
             if path == "/api/records":
                 task = data.get("task")
                 if not isinstance(task, str):
@@ -160,11 +140,11 @@ class Workbench(BaseHTTPRequestHandler):
                     self.send_json(404, {"error": "接口不存在。"})
                     return
                 record_id, action = pieces[2:]
-                saved = self.load(record_id)
+                saved = self.server.store.load(record_id)
                 if saved is None:
                     self.send_json(404, {"error": "记录不存在。"})
                     return
-                record = json.loads(saved)
+                record, write_version = saved
                 if data.get("version") != record["version"] or data.get("status") != record["status"]:
                     self.stale_record()
                     return
@@ -182,19 +162,14 @@ class Workbench(BaseHTTPRequestHandler):
                         raise ValueError("请选择有效的复核操作。")
                     review(record, operation, data.get("note", ""))
             record["updated_at"] = datetime.now(timezone.utc).isoformat()
-            encoded = json.dumps(record, ensure_ascii=False)
-            with self.database() as db:
-                if saved is None:
-                    db.execute("INSERT INTO records(id, data) VALUES (?, ?)", (record_id, encoded))
-                else:
-                    changed = db.execute("UPDATE records SET data = ? WHERE id = ? AND data = ?",
-                                         (encoded, record_id, saved)).rowcount
-            if saved is not None and not changed:
+            if not self.server.store.save(record_id, record, write_version):
                 self.stale_record()
                 return
             self.send_json(200, self.record_response(record_id, record))
         except ModelUnavailable as error:
             self.send_json(error.status, {"error": str(error), "code": "model_unavailable"})
+        except sqlite3.Error as error:
+            self.database_error(error)
         except ValueError as error:
             self.send_json(400, {"error": str(error)})
         except (OSError, KeyError, IndexError, TypeError, AttributeError):
@@ -206,14 +181,22 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--host", choices=("127.0.0.1", "0.0.0.0"), default="127.0.0.1")
     parser.add_argument("--db", type=Path, default=ROOT.parent / ".orchard" / "records.sqlite3")
+    parser.add_argument("--backup", type=Path, help="将数据库备份到指定的新文件后退出")
     parser.add_argument("--exit-on-stdin-close", action="store_true")
     args = parser.parse_args()
-    args.db.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(args.db)) as db, db:
-        db.execute("CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+    store = RecordStore(args.db)
+    try:
+        if args.backup:
+            store.backup(args.backup)
+            print(f"数据库备份已保存至 {args.backup}")
+            return
+        if backup := store.initialize():
+            print(f"数据库已迁移，原库备份位于 {backup}", file=sys.stderr)
+    except (OSError, sqlite3.Error) as error:
+        parser.exit(1, f"巡查数据库无法初始化或备份：{error}\n")
     try:
         with ThreadingHTTPServer((args.host, args.port), Workbench) as server:
-            server.db_path = args.db
+            server.store = store
             server.local_token = os.getenv("ORCHARD_LOCAL_TOKEN", "").encode()
             if args.exit_on_stdin_close:
                 def stop_when_parent_exits():

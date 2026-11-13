@@ -66,6 +66,16 @@ $env:ORCHARD_PYTHON_IMAGE = 'public.ecr.aws/docker/library/python:3.12-slim'
 docker compose up --build -d
 ```
 
+## 巡查数据库备份
+
+新版后端首次打开旧库时，会在同一目录生成 `*.before-v1-*.sqlite3` 备份，再迁移列表摘要。电脑端和小程序继续使用原有记录接口。共享服务运行时可用 SQLite 的在线备份生成一致的副本。
+
+```powershell
+python app.py --db 'local/wechat-simulator/records.sqlite3' --backup 'local/backups/records-2026-11-13.sqlite3'
+```
+
+将 `--db` 指向实际使用的库，`--backup` 填写新文件路径。恢复时先停止服务，再用 `--db` 指向备份副本启动。数据库开启了 WAL，在线备份请使用上述命令。
+
 ## 浏览器调试
 
 需要 Python 3.10 或更新版本。Python 服务无需安装第三方运行依赖。
