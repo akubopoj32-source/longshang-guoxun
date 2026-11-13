@@ -24,6 +24,35 @@ def count_extraction(scope):
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_model_quantity_omission_recovers_spoken_count_and_image_alert(self):
+        record = new_record("trap")
+        message = "三号点看到两只疑似虫体"
+        apply_turn(record, message, PHOTO, lambda *_: Extraction([], "图中有三个标记", "usable", 3, "complete"))
+
+        quantity = record["fields"]["quantity"]
+        self.assertEqual(quantity["value"], "两只")
+        self.assertEqual(quantity["evidence"], [{"turn": 1, "quote": message, "source": "text"}])
+        alert, = evidence_alerts(record)
+        self.assertEqual((alert["reported"], alert["visible"], alert["turn"]), (2, 3, 1))
+
+    def test_quantity_recovery_requires_an_unambiguous_spoken_count(self):
+        for message in ("看到约两只虫体", "看到两三只虫体", "看到两只虫体以上",
+                        "看到两只虫体，后来又看到三只虫体", "没有看见两只虫体", "更正：可能看到两只虫体",
+                        "上传两只诱捕器的照片", "看到两只虫体的照片", "如果看到两只虫体就通知我",
+                        "观察数量记不清", "只上传图片"):
+            with self.subTest(message=message):
+                record = new_record("trap")
+                apply_turn(record, message, PHOTO, lambda *_: Extraction([], "图中有三个标记", "usable", 3, "complete"))
+                self.assertNotIn("quantity", record["fields"])
+                self.assertEqual(evidence_alerts(record), [])
+
+    def test_quantity_recovery_preserves_model_uncertainty(self):
+        record = new_record("trap")
+        message = "看到两只疑似虫体"
+        result = Extraction([{"field": "quantity", "value": "未知", "quote": message, "status": "unknown"}])
+        apply_turn(record, message, extractor=lambda *_: result)
+        self.assertEqual(record["fields"]["quantity"]["status"], "unknown")
+
     def test_quantity_difference_survives_repeat_but_not_correction(self):
         record = new_record("trap")
         apply_turn(record, "看到两只疑似虫体", PHOTO, count_extraction("complete"))

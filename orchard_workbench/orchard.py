@@ -30,6 +30,9 @@ PHOTO_REPLY = re.compile(r"(?:无法|不能|不方便|没法|不便|暂时不|�
 UNKNOWN = re.compile(r"不知道|说不准|不清楚|无法确认|记不清|没数|未清点|不记得|没记|不确定")
 CORRECTION = re.compile(r"说错了|更正|改成|实际上|应该是|而是|其实是")
 HEDGED = re.compile(r"可能|大概|估计|也许|不确定")
+COUNT_UNCERTAIN = re.compile(r"约|左右|上下|至少|至多|不到|不足|超过|将近|以上|以下|不是|并非|如果|假设|预计|"
+                             r"(?:没(?:有)?|未)(?:能)?(?:看到|看见|发现|观察到)")
+EXACT_TRAP_QUANTITY = re.compile(r"(?:[0-9]{1,3}|[零〇一二两三四五六七八九]|[一二两三四五六七八九]?十[一二三四五六七八九]?)\s*只")
 POINT = re.compile(r"[零一二两三四五六七八九十百〇0-9]+\s*号\s*(?:诱捕监测点|诱捕点|监测点|点)")
 PLOT = re.compile(r"[\u4e00-\u9fff]{0,6}?[零一二两三四五六七八九十百〇0-9]+\s*号\s*(?:地块|地)")
 TIME = re.compile(r"(?:今天|昨天|前天|当天|\d{1,2}月\d{1,2}日)(?:早上|上午|中午|下午|傍晚|晚上|凌晨)?(?:\s*\d{1,2}(?:点|时)(?:半|\d{1,2}分)?)?|(?:早上|上午|中午|下午|傍晚|晚上|凌晨)(?:\s*\d{1,2}(?:点|时)(?:半|\d{1,2}分)?)?|\d{1,2}[:：]\d{2}")
@@ -118,28 +121,46 @@ def validate_image(data):
 
 def apply_candidate(record, candidate, message, turn):
     if not isinstance(candidate, dict):
-        return
+        return False
     field, value, quote, status = (candidate.get(key) for key in ("field", "value", "quote", "status"))
     if not all(isinstance(item, str) for item in (field, value, quote, status)):
-        return
+        return False
     if field not in TASKS[record["task"]]["fields"] or status not in {"recorded", "unknown", "conflict"}:
-        return
+        return False
     if not quote.strip() or quote not in message or not value.strip() or len(value) > 500:
-        return
+        return False
     if status == "recorded" and field != "photo" and value not in quote:
-        return
+        return False
     before = record["fields"].get(field)
     correction = candidate.get("correction") is True and bool(CORRECTION.search(message))
     sources = [{"turn": turn, "quote": quote, "source": "text"}]
     if before and before["status"] in {"recorded", "conflict"} and not correction:
         if status == "unknown":
-            return
+            return True
         if before["value"] != value or before["status"] == "conflict":
             value = " / ".join(dict.fromkeys([*before["value"].split(" / "), *value.split(" / ")]))
             status = "conflict"
         if not before.get("review_version"):
             sources = before["evidence"] + sources
     set_field(record, field, {"value": value, "status": status, "evidence": sources})
+    return True
+
+
+def recover_trap_quantity(record, message, turn):
+    if (record["task"] != "trap" or UNKNOWN.search(message) or HEDGED.search(message)
+            or COUNT_UNCERTAIN.search(message)):
+        return
+    candidates = [item for item in rule_candidates(record, message).updates if item["field"] == "quantity"]
+    if len(candidates) != 1 or candidates[0]["status"] != "recorded":
+        return
+    candidate = candidates[0]
+    value = candidate["value"]
+    if not EXACT_TRAP_QUANTITY.fullmatch(value):
+        return
+    count = re.escape(value)
+    if re.search(rf"(?:数量\s*(?:为|是|[:：])?\s*{count}|"
+                 rf"(?:看到|看见|发现|观察到)\s*{count}\s*(?:疑似)?\s*(?:虫体|虫子))$", candidate["quote"]):
+        apply_candidate(record, candidate, message, turn)
 
 
 def set_field(record, field, current):
@@ -184,8 +205,12 @@ def apply_turn(record, message, image="", extractor=None, *, rules_only=False):
                             "visible_count": count if comparable else None,
                             "photo_unavailable": bool(PHOTO_REPLY.search(message)),
                             "time": datetime.now().astimezone().isoformat(timespec="seconds")})
+    has_quantity = False
     for update in result.updates:
-        apply_candidate(record, update, message, turn)
+        if apply_candidate(record, update, message, turn) and update["field"] == "quantity":
+            has_quantity = True
+    if mode == "model" and not has_quantity:
+        recover_trap_quantity(record, message, turn)
     if image:
         before = record["fields"].get("photo")
         if before and before["status"] == "recorded" and NO_PHOTO.search(message):

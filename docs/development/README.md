@@ -6,3 +6,4 @@
 
 - [2026-11-13 电脑端、小程序与模型联调交接](2026-11-13-project-development-handoff.md)
 - [2026-11-13 共享后端真实模型联调](2026-11-13-backend-live-model-verification.md)
+- [2026-11-13 补齐模型漏提的虫体数量](2026-11-13-backend-recover-trap-quantity.md)
