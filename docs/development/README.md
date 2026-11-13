@@ -10,3 +10,4 @@
 - [2026-11-13 扩展 SQLite 存储与备份](2026-11-13-backend-sqlite-reliability.md)
 - [2026-11-13 电脑端巡查知识库与 RAG](2026-11-13-desktop-knowledge-rag.md)
 - [2026-11-13 扩充苹果果园巡查知识库](2026-11-13-knowledge-orchard-sources.md)
+- [2026-11-13 桌面待复核队列与证据对照](2026-11-13-desktop-review-workspace.md)

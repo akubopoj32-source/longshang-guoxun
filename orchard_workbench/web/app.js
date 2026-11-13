@@ -8,12 +8,20 @@ let state;
 let records = [];
 let busy = false;
 let knowledgePending = false;
+let refreshingQueue = false;
+let queueRequest = 0;
+let queueStatus = "pending";
+let selectedField;
+let selectedTurn;
 const activityFormat = new Intl.DateTimeFormat("zh-CN", {dateStyle: "short", timeStyle: "short"});
+const dateFormat = new Intl.DateTimeFormat("sv-SE", {year: "numeric", month: "2-digit", day: "2-digit"});
+const syncFormat = new Intl.DateTimeFormat("zh-CN", {hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false});
 
 async function request(path, body) {
   const options = body === undefined ? {} : {
     method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
   };
+  if (body === undefined) options.signal = AbortSignal.timeout(8000);
   const response = await fetch(path, options);
   const data = await response.json();
   if (!response.ok) throw Object.assign(new Error(data.error || "请求失败。"), { code: data.code });
@@ -33,26 +41,39 @@ function notify(text, error = false) {
 }
 
 function renderList() {
-  const filter = $("record-filter").value;
+  const task = $("record-task").value;
+  const date = $("record-date").value;
   const query = $("record-search").value.trim().replace(/^#/, "").toLowerCase();
+  const counts = {pending: 0, returned: 0, confirmed: 0, draft: 0, "": records.length};
+  for (const record of records) counts[record.status]++;
+  for (const button of $("queue-tabs").querySelectorAll("button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.status === queueStatus));
+    button.querySelector("span").textContent = counts[button.dataset.status];
+  }
   const visible = records.filter((record) => {
-    if (filter && record.status !== filter) return false;
+    if (queueStatus && record.status !== queueStatus) return false;
+    if (task && record.task !== task) return false;
+    if (date && (!record.activity_at || dateFormat.format(new Date(record.activity_at)) !== date)) return false;
     return !query || [record.location, tasks[record.task].label, record.id]
       .some((value) => value?.toLowerCase().includes(query));
   });
   $("list-empty").hidden = visible.length > 0;
-  $("list-empty").textContent = filter || query ? "没有符合筛选条件的记录。" : "还没有巡查记录。";
+  $("list-empty").textContent = task || date || query ? "没有符合筛选条件的记录。"
+    : queueStatus ? `暂无${statusNames[queueStatus]}记录。` : "还没有巡查记录。";
+  const focusedRecord = document.activeElement?.dataset.recordId;
   $("record-list").replaceChildren();
   for (const record of visible) {
     const item = element("li");
     const button = element("button", undefined, "record-item");
     button.type = "button";
+    button.dataset.recordId = record.id;
     button.disabled = busy;
     if (state?.id === record.id) button.setAttribute("aria-current", "true");
     button.append(
       element("strong", record.location || "点位待补充"),
-      element("span", `${tasks[record.task].label} · ${statusNames[record.status]}`),
-      element("span", `#${record.id.slice(0, 8)} · ${record.activity_at ? activityFormat.format(new Date(record.activity_at)) : "无活动时间"}`),
+      element("span", tasks[record.task].label, "record-task"),
+      statusBadge(record.status),
+      element("span", `#${record.id.slice(0, 8)} · ${record.activity_at ? activityFormat.format(new Date(record.activity_at)) : "无活动时间"}`, "record-time"),
     );
     button.addEventListener("click", () => {
       if (state?.id === record.id || !canLeaveInput()) return;
@@ -63,12 +84,44 @@ function renderList() {
     });
     item.append(button);
     $("record-list").append(item);
+    if (focusedRecord === record.id) button.focus({preventScroll: true});
   }
 }
 
-async function refreshRecords() {
-  records = (await request("/api/records")).records;
+function statusBadge(status) {
+  return element("span", statusNames[status], `badge badge-${status}`);
+}
+
+function selectQueue(status, clearFilters = false) {
+  queueStatus = status;
+  if (clearFilters) {
+    $("record-search").value = "";
+    $("record-task").value = "";
+    $("record-date").value = "";
+  }
   renderList();
+}
+
+async function refreshRecords({background = false} = {}) {
+  if (background && (busy || refreshingQueue || document.hidden)) return;
+  const requestId = ++queueRequest;
+  refreshingQueue = true;
+  try {
+    const incoming = (await request("/api/records")).records;
+    if (requestId !== queueRequest || (background && busy)) return;
+    const changed = JSON.stringify(incoming) !== JSON.stringify(records);
+    records = incoming;
+    if (changed || !background) renderList();
+    $("queue-sync").textContent = `已刷新 ${syncFormat.format(new Date())}`;
+    $("queue-sync").classList.remove("error");
+  } catch (error) {
+    if (requestId !== queueRequest) return;
+    $("queue-sync").textContent = "刷新失败，点击「刷新」重试。";
+    $("queue-sync").classList.add("error");
+    if (!background) throw error;
+  } finally {
+    if (requestId === queueRequest) refreshingQueue = false;
+  }
 }
 
 function canLeaveInput() {
@@ -90,27 +143,32 @@ async function run(action) {
   if (busy) return;
   busy = true;
   for (const button of document.querySelectorAll("button")) button.disabled = true;
-  $("review-note").disabled = true;
+  const inputs = document.querySelectorAll("#record-workspace textarea, #record-workspace input, #record-workspace select, #task");
+  for (const input of inputs) input.disabled = true;
   notify("正在处理…");
   try {
-    await action();
-    notify("");
+    const message = await action();
+    notify(message || "");
   } catch (error) {
     notify(error.message, true);
   } finally {
     busy = false;
     for (const button of document.querySelectorAll("button")) button.disabled = false;
-    $("review-note").disabled = false;
+    $("ask-knowledge").disabled = knowledgePending;
+    for (const input of inputs) input.disabled = false;
   }
 }
 
 function update(data) {
-  if (state?.id !== data.id) {
+  const switchingRecord = state?.id !== data.id;
+  if (switchingRecord) {
     $("review-note").value = "";
+    $("review-note-panel").open = false;
     $("review-history").open = false;
     $("field-review-form").reset();
-    $("field-review-key").replaceChildren();
     $("field-review-history").open = false;
+    selectedField = undefined;
+    selectedTurn = undefined;
   }
   state = data;
   localStorage.setItem("orchard-last-record", data.id);
@@ -118,60 +176,43 @@ function update(data) {
   const task = tasks[record.task];
   $("task").value = record.task;
   renderList();
-  $("record-status").textContent = `${task.label} · 第 ${record.version} 版 · ${statusNames[record.status]}`;
+  $("record-empty").hidden = true;
+  $("record-workspace").hidden = false;
+  $("record-title").textContent = record.fields.location?.value || "点位待补充";
+  $("record-badge").replaceWith(Object.assign(statusBadge(record.status), {id: "record-badge"}));
+  $("record-status").textContent = `${task.label} · #${data.id.slice(0, 8)} · 第 ${record.version} 版`;
   $("turn").hidden = !["draft", "returned"].includes(record.status);
   $("rules-fallback").hidden = true;
-  $("history").hidden = record.turns.length === 0;
   $("review").hidden = record.turns.length === 0;
   $("question").textContent = data.questions[0] || (record.turns.length ? "可以继续补充，或提交复核。" : "请描述现场观察。");
-  $("fields").replaceChildren();
-  for (const [key, label] of Object.entries(task.fields)) {
-    const field = record.fields[key];
-    const reviewVersion = field?.review_version;
-    const details = element("dd", field ? `${field.value} · ${fieldStates[field.status]}` : "待补充");
-    if (reviewVersion) {
-      const link = element("a", `查看第 ${reviewVersion} 版人工判断`);
-      link.href = `#field-review-${reviewVersion}`;
-      link.addEventListener("click", () => { $("field-review-history").open = true; });
-      details.append(link);
-    }
-    for (const evidence of field?.evidence || []) {
-      const link = element("a", `第 ${evidence.turn} 轮 · ${evidence.quote || "原图"}`);
-      link.href = `#evidence-${evidence.turn}`;
-      details.append(link);
-    }
-    $("fields").append(element("dt", label), details);
-  }
-  $("turns").replaceChildren();
-  for (const turn of record.turns) {
-    const entry = element("article", undefined, "evidence");
-    entry.id = `evidence-${turn.id}`;
-    const source = {model: "图文模型", rules: "本地规则"}[turn.extraction_mode];
-    entry.append(element("h3", source ? `第 ${turn.id} 轮 · ${source}` : `第 ${turn.id} 轮`),
-      element("p", turn.message ? `巡查员原话：${turn.message}` : "仅上传图片"));
-    if (turn.image) {
-      const image = element("img");
-      image.src = turn.image;
-      image.alt = `第 ${turn.id} 轮的巡查照片`;
-      entry.append(image, element("p", turn.visual ? `模型视觉线索，待人工核对：${turn.visual}` : "已留存原图，当前无视觉提取结果。"));
-      if (turn.visible_count != null) entry.append(element("p", `模型估计照片中可见 ${turn.visible_count} 只，待人工核对。`));
-    }
-    $("turns").append(entry);
-  }
   const alerts = data.evidence_alerts || [];
+  if (switchingRecord && alerts.length) {
+    selectedField = "quantity";
+    selectedTurn = alerts.at(-1).turn;
+  } else if (switchingRecord) {
+    selectedField = Object.keys(task.fields)[0];
+    selectedTurn = record.turns.findLast((turn) => turn.image)?.id ?? record.turns.at(-1)?.id;
+  }
+  if (switchingRecord || record.turns.length !== $("evidence-turn").options.length) {
+    $("evidence-turn").replaceChildren(...record.turns.map((turn) => new Option(`第 ${turn.id} 轮`, turn.id)));
+  }
+  renderFields(task, record, alerts);
+  renderEvidence();
   $("evidence-alerts").hidden = alerts.length === 0;
   $("alert-list").replaceChildren(...alerts.map((alert) => {
     const item = element("li", `口述 ${alert.reported} 只，照片估计可见 ${alert.visible} 只。`);
-    const link = element("a", `查看第 ${alert.turn} 轮原话与照片`);
-    link.href = `#evidence-${alert.turn}`;
-    item.append(" ", link);
+    const button = element("button", `核对第 ${alert.turn} 轮证据`, "text-button");
+    button.type = "button";
+    button.addEventListener("click", () => selectField("quantity", alert.turn));
+    item.append(button);
     return item;
   }));
+  $("pending-count").textContent = data.pending.length ? `· ${data.pending.length} 项` : "";
   $("pending").replaceChildren(...(data.pending.length ? data.pending : ["无"]).map((item) => element("li", item)));
   $("revisions").replaceChildren(...record.revisions.filter((change) => change.before).map((change) =>
     element("li", `第 ${change.version} 版 · ${task.fields[change.field]}：${change.before.value} → ${change.after.value}`)));
   if (!$("revisions").children.length) $("revisions").append(element("li", "暂无字段修订。"));
-  updateFieldReviews(record, task, alerts);
+  updateFieldReviews(record, task, switchingRecord);
   $("review-history").hidden = record.reviews.length === 0;
   $("review-entries").replaceChildren(...record.reviews.map((entry) => {
     const time = activityFormat.format(new Date(entry.time));
@@ -182,17 +223,97 @@ function update(data) {
   const lastReview = record.reviews.at(-1);
   const returnNote = record.status === "returned" ? lastReview?.note : "";
   $("return-note").hidden = !returnNote;
-  $("return-note").textContent = returnNote ? `退回意见\n${returnNote}` : "";
+  $("return-note").textContent = returnNote ? `退回意见：${returnNote}` : "";
   $("review-note-panel").hidden = !["pending", "confirmed"].includes(record.status);
   $("actions").replaceChildren();
-  if (["draft", "returned"].includes(record.status)) addAction("提交复核", () => changeReview("submit"));
+  if (record.turns.length && ["draft", "returned"].includes(record.status)) addAction("提交复核", () => changeReview("submit"));
   if (record.status === "pending") addAction("确认当前版本", () => changeReview("confirm"));
-  if (["pending", "confirmed"].includes(record.status)) addAction("退回补充", () => changeReview("return"));
+  if (["pending", "confirmed"].includes(record.status)) addAction("退回补充", () => changeReview("return"), "secondary");
   if (record.status === "confirmed") {
-    addAction("导出复核记录", exportRecord);
-    addAction("导出复查单（Markdown）", exportChecklist);
     addAction("预览打印版", openPrintPreview);
+    addAction("导出复核记录", exportRecord, "secondary");
+    addAction("导出复查单（Markdown）", exportChecklist, "secondary");
   }
+}
+
+function renderFields(task, record, alerts) {
+  $("fields").replaceChildren();
+  for (const [key, label] of Object.entries(task.fields)) {
+    const field = record.fields[key];
+    const item = element("li");
+    const button = element("button", undefined, "field-button");
+    button.type = "button";
+    button.dataset.field = key;
+    button.setAttribute("aria-pressed", String(key === selectedField));
+    const conflict = field?.status === "conflict" || (key === "quantity" && alerts.length > 0);
+    const manuallyVerified = field?.status === "recorded" && field.review_version;
+    const labelText = conflict ? "待核对" : manuallyVerified ? "人工复核" : fieldStates[field?.status] || "待补充";
+    button.append(element("span", label, "field-name"), element("strong", field?.value || "—", "field-value"),
+      element("span", labelText, `badge ${conflict ? "badge-pending" : manuallyVerified ? "badge-confirmed" : "badge-draft"}`));
+    button.addEventListener("click", () => selectField(key));
+    item.append(button);
+    $("fields").append(item);
+  }
+}
+
+function selectField(key, turn) {
+  if (busy) return;
+  if (selectedField !== key) {
+    if (hasFieldReviewInput() && !window.confirm("要放弃未保存的字段判断并切换字段吗？")) return;
+    $("field-review-form").reset();
+    selectedField = key;
+    for (const button of $("fields").querySelectorAll("button")) {
+      button.setAttribute("aria-pressed", String(button.dataset.field === key));
+    }
+    renderFieldReview(true);
+  }
+  const alert = key === "quantity" ? state.evidence_alerts?.at(-1) : null;
+  const fieldEvidence = state.record.fields[key]?.evidence?.at(-1);
+  selectedTurn = turn ?? alert?.turn ?? fieldEvidence?.turn ?? selectedTurn;
+  renderEvidence();
+}
+
+function renderEvidence() {
+  const record = state.record;
+  const turn = record.turns.find((item) => item.id === selectedTurn) || record.turns.at(-1);
+  $("evidence-empty").hidden = Boolean(turn);
+  $("evidence-detail").hidden = !turn;
+  $("turn-picker").hidden = record.turns.length < 2;
+  if (!turn) {
+    $("evidence-image").removeAttribute("src");
+    return;
+  }
+  selectedTurn = turn.id;
+  const field = record.fields[selectedField];
+  const linkedTurns = new Set(field?.evidence?.map((item) => item.turn));
+  for (const option of $("evidence-turn").options) {
+    const number = Number(option.value);
+    option.textContent = `第 ${number} 轮${linkedTurns.has(number) ? " · 字段依据" : ""}`;
+  }
+  $("evidence-turn").value = turn.id;
+  const source = {model: "图文模型", rules: "本地规则"}[turn.extraction_mode];
+  $("evidence-source").textContent = source ? `第 ${turn.id} 轮 · ${source}` : `第 ${turn.id} 轮`;
+  $("evidence-message").textContent = turn.message || "本轮未填写文字。";
+  const label = tasks[record.task].fields[selectedField];
+  const linked = field?.evidence?.filter((item) => item.turn === turn.id) || [];
+  const quotes = [...new Set(linked.map((item) => item.quote).filter(Boolean))];
+  $("evidence-linkage").textContent = linked.length
+    ? `${label}依据${quotes.length ? ` · ${quotes.join(" / ")}` : " · 本轮原图"}`
+    : `本轮未关联到「${label}」字段。`;
+  $("evidence-photo").hidden = !turn.image;
+  $("evidence-no-photo").hidden = Boolean(turn.image);
+  $("evidence-visual").hidden = !turn.image;
+  if (!turn.image) {
+    $("evidence-image").removeAttribute("src");
+    return;
+  }
+  const photo = $("evidence-image");
+  photo.src = turn.image;
+  photo.alt = `第 ${turn.id} 轮巡查原图`;
+  const quality = turn.photo_quality === "limited" ? "照片细节或覆盖有限，需人工核对。"
+    : turn.visual ? "" : "已留存原图，当前无视觉提取结果。";
+  $("evidence-visual-text").textContent = [turn.visual, quality].filter(Boolean).join(" ");
+  $("evidence-count").textContent = turn.visible_count == null ? "" : `模型估计可见 ${turn.visible_count} 只，待人工核对。`;
 }
 
 function fieldReviewText(entry, task) {
@@ -200,66 +321,43 @@ function fieldReviewText(entry, task) {
   return `第 ${entry.version} 版 · ${task.fields[entry.field]} · ${fieldReviewNames[entry.action]} · ${prior} → ${entry.after.value}`;
 }
 
-function updateFieldReviews(record, task, alerts) {
+function updateFieldReviews(record, task, resetAction) {
   const history = record.field_reviews || [];
   $("field-review-history").hidden = history.length === 0;
   $("field-review-entries").replaceChildren(...history.map((entry) => {
     const item = element("li", fieldReviewText(entry, task));
-    item.id = `field-review-${entry.version}`;
     if (entry.note) item.append(element("span", entry.note, "review-note-text"));
     for (const alert of entry.alerts || []) {
-      const link = element("a", `第 ${alert.turn} 轮口述 ${alert.reported} 只 · 照片估计可见 ${alert.visible} 只`);
-      link.href = `#evidence-${alert.turn}`;
-      item.append(element("br"), link);
+      const button = element("button", `第 ${alert.turn} 轮口述 ${alert.reported} 只 · 照片估计可见 ${alert.visible} 只`, "text-button");
+      button.type = "button";
+      button.addEventListener("click", () => selectField(entry.field, alert.turn));
+      item.append(button);
     }
     return item;
   }));
   const form = $("field-review-form");
   form.hidden = record.status !== "pending";
   if (form.hidden) return;
-  const select = $("field-review-key");
-  const selected = select.value;
-  select.replaceChildren(...Object.entries(task.fields).map(([key, label]) => {
-    const option = element("option", label);
-    option.value = key;
-    return option;
-  }));
-  if (selected in task.fields) select.value = selected;
-  else if (alerts.length) select.value = "quantity";
-  renderFieldReview();
+  renderFieldReview(resetAction);
 }
 
-function renderFieldReview() {
+function renderFieldReview(resetAction = false) {
   const record = state.record;
-  const field = record.fields[$("field-review-key").value];
-  $("field-review-current").textContent = field ? `${field.value} · ${fieldStates[field.status]}` : "该字段尚待补充";
-  const evidence = $("field-review-evidence");
-  evidence.replaceChildren();
-  const sourceTurns = new Set();
-  for (const source of field?.evidence || []) {
-    const link = element("a", `第 ${source.turn} 轮${source.quote ? ` · ${source.quote}` : "原图"}`);
-    link.href = `#evidence-${source.turn}`;
-    evidence.append(link);
-    sourceTurns.add(source.turn);
-  }
-  const pictured = record.turns.findLast((turn) => turn.image && sourceTurns.has(turn.id));
-  if (pictured) {
-    const picture = element("img");
-    picture.src = pictured.image;
-    picture.alt = `第 ${pictured.id} 轮照片预览`;
-    evidence.append(picture);
-  }
+  const field = record.fields[selectedField];
+  $("field-review-heading").textContent = `复核${tasks[record.task].fields[selectedField]}`;
   const action = $("field-review-action");
   action.options[0].disabled = field?.status !== "recorded";
-  if ((!action.value || action.value === "confirm") && action.options[0].disabled) action.value = "mark_unknown";
+  if (resetAction || !action.value || (action.value === "confirm" && action.options[0].disabled)) {
+    action.value = action.options[0].disabled ? "mark_unknown" : "confirm";
+  }
   const correcting = action.value === "correct";
   $("field-review-value-panel").hidden = !correcting;
   $("field-review-value").required = correcting;
   $("field-review-note").required = correcting;
 }
 
-function addAction(label, action) {
-  const button = element("button", label);
+function addAction(label, action, className) {
+  const button = element("button", label, className);
   button.type = "button";
   button.addEventListener("click", () => run(action));
   $("actions").append(button);
@@ -274,7 +372,10 @@ async function changeReview(action) {
     note: action === "submit" ? "" : $("review-note").value,
   }));
   $("review-note").value = "";
+  $("review-note-panel").open = false;
+  if (action === "submit") selectQueue("pending", true);
   await refreshRecords();
+  return `已${reviewNames[action]}。`;
 }
 
 function exportRecord() {
@@ -397,14 +498,25 @@ function readImage(file) {
   });
 }
 
+function toggleNewRecord(open) {
+  $("new-record").hidden = !open;
+  $("toggle-new-record").setAttribute("aria-expanded", String(open));
+  if (open) $("task").focus();
+  else $("toggle-new-record").focus();
+}
+
+$("toggle-new-record").addEventListener("click", () => {
+  if (tasks) toggleNewRecord($("new-record").hidden);
+});
+$("cancel-new-record").addEventListener("click", () => toggleNewRecord(false));
 $("new-record").addEventListener("submit", (event) => {
   event.preventDefault();
   if (!canLeaveInput()) return;
   run(async () => {
     update(await request("/api/records", {task: $("task").value}));
     $("turn").reset();
-    $("record-filter").value = "";
-    $("record-search").value = "";
+    toggleNewRecord(false);
+    selectQueue("draft", true);
     await refreshRecords();
   });
 });
@@ -415,21 +527,28 @@ $("turn").addEventListener("submit", (event) => {
   run(async () => {
     const image = await readImage($("photo").files[0]);
     try {
-      update(await request(`/api/records/${state.id}/turn`, {
+      const data = await request(`/api/records/${state.id}/turn`, {
         message: $("message").value, image, version: state.record.version,
         status: state.record.status, rules_only: rulesOnly,
-      }));
+      });
+      selectedTurn = data.record.turns.at(-1).id;
+      update(data);
     } catch (error) {
       if (error.code === "model_unavailable") $("rules-fallback").hidden = false;
       throw error;
     }
     $("turn").reset();
     await refreshRecords();
+    return `已保存第 ${state.record.version} 版。`;
   });
 });
 
-$("record-filter").addEventListener("change", renderList);
-$("record-search").addEventListener("input", renderList);
+$("queue-tabs").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-status]");
+  if (button && tasks) selectQueue(button.dataset.status);
+});
+for (const id of ["record-task", "record-date"]) $(id).addEventListener("change", () => tasks && renderList());
+$("record-search").addEventListener("input", () => tasks && renderList());
 $("refresh-records").addEventListener("click", () => {
   if (!tasks) return;
   run(async () => {
@@ -440,17 +559,32 @@ $("refresh-records").addEventListener("click", () => {
     }
   });
 });
-$("field-review-key").addEventListener("change", () => {
-  $("field-review-value").value = "";
-  $("field-review-note").value = "";
-  renderFieldReview();
+$("evidence-turn").addEventListener("change", () => {
+  selectedTurn = Number($("evidence-turn").value);
+  renderEvidence();
 });
-$("field-review-action").addEventListener("change", renderFieldReview);
+$("open-photo").addEventListener("click", () => {
+  const photo = $("evidence-image");
+  $("photo-title").textContent = photo.alt;
+  $("photo-full").src = photo.src;
+  $("photo-full").alt = photo.alt;
+  $("photo-viewport").classList.remove("actual-size");
+  $("photo-viewport").scrollTo(0, 0);
+  $("photo-size").textContent = "原始尺寸";
+  $("photo-dialog").showModal();
+});
+$("photo-size").addEventListener("click", () => {
+  const actual = $("photo-viewport").classList.toggle("actual-size");
+  $("photo-size").textContent = actual ? "适应窗口" : "原始尺寸";
+  $("photo-viewport").scrollTo(0, 0);
+});
+$("photo-dialog").addEventListener("close", () => $("photo-full").removeAttribute("src"));
+$("field-review-action").addEventListener("change", () => renderFieldReview());
 $("field-review-form").addEventListener("submit", (event) => {
   event.preventDefault();
   run(async () => {
     const data = await request(`/api/records/${state.id}/field-review`, {
-      field: $("field-review-key").value, action: $("field-review-action").value,
+      field: selectedField, action: $("field-review-action").value,
       value: $("field-review-value").value, note: $("field-review-note").value,
       version: state.record.version, status: state.record.status,
     });
@@ -458,6 +592,7 @@ $("field-review-form").addEventListener("submit", (event) => {
     $("field-review-note").value = "";
     update(data);
     await refreshRecords();
+    return `字段判断已保存至第 ${state.record.version} 版。`;
   });
 });
 $("close-preview").addEventListener("click", () => $("print-preview").close());
@@ -531,15 +666,19 @@ run(async () => {
     ? "图文模型模式 · 输入将发送到已配置的模型服务"
     : "规则演示 · 支持上传和查看原图，未启用图像识别";
   for (const [key, task] of Object.entries(tasks)) {
-    const option = element("option", task.label);
-    option.value = key;
-    $("task").append(option);
+    $("task").add(new Option(task.label, key));
+    $("record-task").add(new Option(task.label, key));
   }
   await refreshRecords();
   const previous = localStorage.getItem("orchard-last-record");
-  if (records.some((record) => record.id === previous)) {
-    update(await request(`/api/records/${previous}`));
-  } else {
-    localStorage.removeItem("orchard-last-record");
-  }
+  const pending = records.filter((record) => record.status === "pending");
+  const next = pending.find((record) => record.id === previous) || pending[0];
+  if (next) update(await request(`/api/records/${next.id}`));
+});
+
+setInterval(() => {
+  if (tasks) refreshRecords({background: true});
+}, 15000);
+document.addEventListener("visibilitychange", () => {
+  if (tasks) refreshRecords({background: true});
 });

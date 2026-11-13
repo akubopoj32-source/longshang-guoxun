@@ -9,95 +9,140 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <header>
-    <div><p class="eyebrow">庆阳苹果果园巡查</p><h1>陇上果巡</h1></div>
-    <div class="row"><p id="mode" class="mode">正在加载…</p><button id="open-knowledge" type="button" class="secondary">知识库</button></div>
+  <header class="app-bar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">陇</span><h1>陇上果巡</h1><span class="app-label">巡查工作台</span></div>
+    <div class="row app-tools"><p id="mode" class="mode" role="status">正在连接…</p><button id="open-knowledge" type="button" class="secondary">知识库</button><button id="toggle-new-record" type="button" aria-expanded="false" aria-controls="new-record">新建巡查</button></div>
   </header>
   <main>
     <p id="notice" role="status" aria-live="polite"></p>
     <aside class="card record-sidebar" aria-labelledby="list-title">
       <div class="row list-heading">
-        <h2 id="list-title">巡查记录</h2>
-        <button id="refresh-records" class="secondary" type="button">刷新记录</button>
+        <h2 id="list-title">巡查队列</h2>
+        <button id="refresh-records" class="secondary compact" type="button">刷新</button>
       </div>
-      <label for="record-search">搜索记录</label>
-      <input id="record-search" type="search" placeholder="点位、任务类型或记录编号">
-      <label for="record-filter">筛选状态</label>
-      <select id="record-filter">
-        <option value="">全部</option>
-        <option value="draft">草稿</option>
-        <option value="pending">待复核</option>
-        <option value="confirmed">已复核</option>
-        <option value="returned">已退回</option>
-      </select>
+      <div id="queue-tabs" class="queue-tabs" role="group" aria-label="按复核状态筛选">
+        <button type="button" data-status="pending" aria-pressed="true">待复核 <span>—</span></button>
+        <button type="button" data-status="returned" aria-pressed="false">已退回 <span>—</span></button>
+        <button type="button" data-status="confirmed" aria-pressed="false">已复核 <span>—</span></button>
+        <button type="button" data-status="draft" aria-pressed="false">草稿 <span>—</span></button>
+        <button type="button" data-status="" aria-pressed="false">全部 <span>—</span></button>
+      </div>
+      <div class="queue-filters">
+        <label for="record-search">搜索记录</label>
+        <input id="record-search" type="search" placeholder="点位、任务类型或记录编号">
+        <div class="filter-grid">
+          <div><label for="record-task">任务类型</label><select id="record-task"><option value="">全部任务</option></select></div>
+          <div><label for="record-date">更新日期</label><input id="record-date" type="date"></div>
+        </div>
+      </div>
+      <p id="queue-sync" class="queue-sync" role="status"></p>
       <p id="list-empty" role="status">正在加载记录…</p>
       <ul id="record-list" aria-label="巡查记录列表"></ul>
     </aside>
-    <section class="card capture" aria-labelledby="capture-title">
-      <h2 id="capture-title">巡查录入</h2>
-      <form id="new-record">
+    <div class="workspace">
+      <form id="new-record" class="card" hidden>
         <label for="task">任务类型</label>
-        <div class="row"><select id="task" required></select><button>新建记录</button></div>
+        <div class="row"><select id="task" required></select><button>新建记录</button><button id="cancel-new-record" class="secondary" type="button">取消</button></div>
       </form>
-      <form id="turn" hidden>
-        <p id="question" class="question" aria-live="polite"></p>
-        <label for="message">现场描述或补充信息</label>
-        <textarea id="message" rows="4" maxlength="2000" placeholder="例如：三号点看到两只疑似虫体"></textarea>
-        <label for="photo">现场照片（选填，最大 4 MB）</label>
-        <input id="photo" type="file" accept="image/jpeg,image/png,image/webp">
-        <div class="row">
-          <button>处理本轮输入</button>
-          <button id="rules-fallback" type="submit" class="secondary" hidden>用规则保存本轮</button>
-        </div>
-      </form>
-      <div id="history" hidden>
-        <h3>原始证据</h3>
-        <div id="turns"></div>
-      </div>
-    </section>
-    <section class="card" aria-labelledby="record-title">
-      <h2 id="record-title">记录与复核</h2>
-      <p id="record-status">请选择已有记录，或新建一条巡查记录。</p>
-      <dl id="fields"></dl>
-      <div id="review" hidden>
-        <p id="return-note" class="evidence-alerts" hidden></p>
-        <section id="evidence-alerts" class="evidence-alerts" aria-labelledby="evidence-title" hidden>
-          <h3 id="evidence-title">图文证据待核对</h3>
-          <ul id="alert-list"></ul>
-        </section>
-        <h3>待核实事项</h3>
-        <ul id="pending"></ul>
-        <form id="field-review-form" hidden>
-          <h3>逐项复核</h3>
-          <label for="field-review-key">复核字段</label>
-          <select id="field-review-key"></select>
-          <p id="field-review-current"></p>
-          <div id="field-review-evidence"></div>
-          <label for="field-review-action">处理方式</label>
-          <select id="field-review-action">
-            <option value="confirm">确认现值</option>
-            <option value="correct">人工更正</option>
-            <option value="mark_unknown">标记为待核实</option>
-          </select>
-          <div id="field-review-value-panel" hidden>
-            <label for="field-review-value">更正值</label>
-            <input id="field-review-value" type="text" maxlength="500">
+      <section id="record-empty" class="card workspace-empty" aria-labelledby="empty-title">
+        <h2 id="empty-title">选择一条巡查记录</h2>
+        <p>从队列打开记录，即可查看原始证据并复核字段。</p>
+      </section>
+      <div id="record-workspace" hidden>
+        <section class="card record-header" aria-labelledby="record-title">
+          <div class="row record-header-content">
+            <div>
+              <div class="row record-heading"><h2 id="record-title"></h2><span id="record-badge" class="badge"></span></div>
+              <p id="record-status"></p>
+            </div>
+            <div id="actions" class="row actions"></div>
           </div>
-          <label for="field-review-note">复核依据</label>
-          <textarea id="field-review-note" rows="2" maxlength="500" placeholder="填写判断依据或现场复查事项"></textarea>
-          <button type="submit">保存字段判断</button>
-        </form>
-        <details><summary>修订历史</summary><ul id="revisions"></ul></details>
-        <details id="field-review-history" hidden><summary>字段复核历史</summary><ul id="field-review-entries"></ul></details>
-        <details id="review-history" hidden><summary>复核历史</summary><ul id="review-entries"></ul></details>
-        <div id="review-note-panel" hidden>
-          <label for="review-note">复核意见（选填）</label>
-          <textarea id="review-note" rows="3" maxlength="500" placeholder="记录核对结论或需补充的内容"></textarea>
+          <p id="return-note" class="evidence-alerts" hidden></p>
+          <details id="review-note-panel" hidden>
+            <summary>复核意见（选填）</summary>
+            <label for="review-note" class="sr-only">复核意见</label>
+            <textarea id="review-note" rows="2" maxlength="500" placeholder="记录核对结论或需补充的内容"></textarea>
+          </details>
+        </section>
+        <div class="review-grid">
+          <section class="card evidence-card" aria-labelledby="evidence-panel-title">
+            <div class="row list-heading">
+              <h2 id="evidence-panel-title">原始证据</h2>
+              <div id="turn-picker" class="row" hidden><label for="evidence-turn">证据轮次</label><select id="evidence-turn"></select></div>
+            </div>
+            <p id="evidence-empty" class="muted">本记录暂无原始证据。</p>
+            <div id="evidence-detail" hidden>
+              <p id="evidence-source" class="evidence-source"></p>
+              <h3>巡查员原话</h3>
+              <p id="evidence-message" class="evidence-quote"></p>
+              <p id="evidence-linkage" class="muted"></p>
+              <div id="evidence-photo" class="photo-frame" hidden>
+                <button id="open-photo" type="button" class="photo-button" aria-label="放大查看原图"><img id="evidence-image" alt="巡查原图"><span>放大原图</span></button>
+              </div>
+              <p id="evidence-no-photo" class="muted" hidden>本轮未上传照片。</p>
+              <div id="evidence-visual" class="visual-note" hidden>
+                <h3>图像线索</h3>
+                <p id="evidence-visual-text"></p>
+                <p id="evidence-count"></p>
+              </div>
+            </div>
+            <form id="turn" hidden>
+              <h3>补充巡查</h3>
+              <p id="question" class="question" aria-live="polite"></p>
+              <label for="message">现场描述或补充信息</label>
+              <textarea id="message" rows="3" maxlength="2000" placeholder="例如：三号点看到两只疑似虫体"></textarea>
+              <label for="photo">现场照片（选填，最大 4 MB）</label>
+              <input id="photo" type="file" accept="image/jpeg,image/png,image/webp">
+              <div class="row">
+                <button>处理本轮输入</button>
+                <button id="rules-fallback" type="submit" class="secondary" hidden>用规则保存本轮</button>
+              </div>
+            </form>
+          </section>
+          <section class="card review-card" aria-labelledby="review-title">
+            <h2 id="review-title">字段复核</h2>
+            <section id="evidence-alerts" class="evidence-alerts" aria-labelledby="evidence-title" hidden>
+              <h3 id="evidence-title">图文数量待核对</h3>
+              <ul id="alert-list"></ul>
+            </section>
+            <ul id="fields" class="field-list" aria-label="巡查字段"></ul>
+            <div id="review" hidden>
+              <form id="field-review-form" hidden>
+                <h3 id="field-review-heading"></h3>
+                <label for="field-review-action">处理方式</label>
+                <select id="field-review-action">
+                  <option value="confirm">确认现值</option>
+                  <option value="correct">人工更正</option>
+                  <option value="mark_unknown">标记为待核实</option>
+                </select>
+                <div id="field-review-value-panel" hidden>
+                  <label for="field-review-value">更正值</label>
+                  <input id="field-review-value" type="text" maxlength="500">
+                </div>
+                <label for="field-review-note">复核依据</label>
+                <textarea id="field-review-note" rows="2" maxlength="500" placeholder="填写判断依据或现场复查事项"></textarea>
+                <button type="submit" class="secondary">保存字段判断</button>
+              </form>
+              <details id="pending-panel"><summary>待核实事项 <span id="pending-count"></span></summary><ul id="pending"></ul></details>
+              <details><summary>修订历史</summary><ul id="revisions"></ul></details>
+              <details id="field-review-history" hidden><summary>字段复核历史</summary><ul id="field-review-entries"></ul></details>
+              <details id="review-history" hidden><summary>复核历史</summary><ul id="review-entries"></ul></details>
+            </div>
+          </section>
         </div>
-        <div id="actions" class="row actions"></div>
       </div>
-    </section>
+    </div>
   </main>
+  <dialog id="photo-dialog" aria-labelledby="photo-title">
+    <div class="row photo-toolbar">
+      <h2 id="photo-title">原始照片</h2>
+      <div class="row">
+        <button id="photo-size" type="button" class="secondary">原始尺寸</button>
+        <form method="dialog"><button type="submit" class="secondary">关闭</button></form>
+      </div>
+    </div>
+    <div id="photo-viewport" tabindex="0" aria-label="照片查看区"><img id="photo-full" alt="巡查原图"></div>
+  </dialog>
   <dialog id="knowledge-dialog" aria-labelledby="knowledge-title">
     <div class="row list-heading">
       <h2 id="knowledge-title">巡查知识库</h2>
