@@ -2,10 +2,22 @@ import unittest
 from unittest.mock import patch
 
 from orchard_workbench.extraction import ModelUnavailable
-from orchard_workbench.knowledge import answer_question, source_url
+from orchard_workbench.knowledge import answer_question, retrieve, source_url
 
 
 class KnowledgeTests(unittest.TestCase):
+    def test_standard_queries_rank_the_requested_standard_before_related_material(self):
+        cases = (
+            ("甘肃苹果蠹蛾监测技术规范 DB62/T 2145-2011 还有效吗？", "codling-gansu-standard-history", "废止"),
+            ("现行苹果蠹蛾监测技术规范是什么？", "codling-ny-standard", "现行"),
+            ("海关苹果蠹蛾性诱监测技术指南 SN/T 5396-2022", "codling-sn-standard", "海关总署"),
+        )
+        for question, expected_id, expected_status in cases:
+            with self.subTest(question=question):
+                first = retrieve(question)[0]
+                self.assertEqual(first["id"], expected_id)
+                self.assertIn(expected_status, first["text"])
+
     @patch("orchard_workbench.knowledge.request_model_json")
     def test_unrelated_question_skips_the_model(self, model):
         result = answer_question("如何打印身份证？")

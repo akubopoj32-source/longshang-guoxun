@@ -9,3 +9,4 @@
 - [2026-11-13 补齐模型漏提的虫体数量](2026-11-13-backend-recover-trap-quantity.md)
 - [2026-11-13 扩展 SQLite 存储与备份](2026-11-13-backend-sqlite-reliability.md)
 - [2026-11-13 电脑端巡查知识库与 RAG](2026-11-13-desktop-knowledge-rag.md)
+- [2026-11-13 扩充苹果果园巡查知识库](2026-11-13-knowledge-orchard-sources.md)
