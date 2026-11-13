@@ -120,6 +120,10 @@ python -m evaluation.run --mode rules --input multimodal --output 'local/评测�
 - [大赛方案](references/2026年中国算谷人工智能大赛方案.pdf)
 - [大赛官方参赛规则](https://cvaic.qyvtc.cn/rules)
 
+## 开发协作
+
+电脑端和小程序端分别开发。每次改动随代码提交一份开发记录，便于合并时核对接口、依赖和验证结果。 [开发记录与模板](docs/development/README.md)
+
 ## 目录说明
 
 | 路径 | 内容 |
@@ -130,7 +134,7 @@ python -m evaluation.run --mode rules --input multimodal --output 'local/评测�
 | `Dockerfile`、`compose.yaml` | 服务镜像与本地容器部署 |
 | `orchard_workbench/` | 服务端、巡查规则与网页 |
 | `evaluation/` | 离线评测入口、开发案例和自制示意图 |
-| `docs/` | 项目策划书及可打印版本 |
+| `docs/` | 项目策划书、可打印版本和开发记录 |
 | `references/` | 赛事方案及庆阳果业公开资料 |
 | `local/` | 本机报名材料、快捷方式和测试产物，Git 忽略 |
 | `.orchard/` | 本机运行数据，Git 忽略 |
