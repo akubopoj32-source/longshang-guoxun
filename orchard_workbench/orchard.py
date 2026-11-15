@@ -139,6 +139,14 @@ def apply_candidate(record, candidate, message, turn):
             status = "conflict"
         if not before.get("review_version"):
             sources = before["evidence"] + sources
+    elif before and correction and before.get("evidence"):
+        # A correction supersedes the value but must not erase the trail: keep
+        # the earlier quotations after the new one so a reviewer can still see
+        # what the inspector originally said.
+        sources = sources + [
+            source for source in before["evidence"]
+            if (source.get("turn"), source.get("quote")) != (turn, quote)
+        ]
     set_field(record, field, {"value": value, "status": status, "evidence": sources})
 
 

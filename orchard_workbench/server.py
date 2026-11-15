@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 from .extraction import ModelUnavailable, model_enabled
 from .orchard import QUESTIONS, TASKS, apply_turn, evidence_alerts, new_record, pending_items, review, review_field
+from .voice import transcribe, transcription_enabled
 
 
 ROOT = Path(__file__).resolve().parent
@@ -52,19 +53,42 @@ class Workbench(BaseHTTPRequestHandler):
         self.send_content(status, json.dumps(data, ensure_ascii=False).encode(),
                           "application/json; charset=utf-8")
 
+    def mobile_record(self, record):
+        """Trim a record for the mini program: keep the evidence chain, drop bulk."""
+        latest_review = record["reviews"][-1] if record["reviews"] else {}
+        alerts = evidence_alerts(record)
+        return {
+            "task": record["task"], "version": record["version"], "status": record["status"],
+            "fields": {key: {"value": field["value"], "status": field["status"],
+                             "review_version": field.get("review_version"),
+                             "evidence": field.get("evidence", [])}
+                       for key, field in record["fields"].items()},
+            "turns": [{
+                "id": turn["id"], "message": turn["message"], "image": turn["image"],
+                "visual": turn["visual"], "photo_quality": turn["photo_quality"],
+                "extraction_mode": turn["extraction_mode"],
+                "visible_count": turn["visible_count"],
+                "photo_unavailable": turn["photo_unavailable"], "time": turn["time"],
+            } for turn in record["turns"]],
+            "revisions": record["revisions"],
+            "reviews": record["reviews"],
+            "field_reviews": [
+                {"version": entry["version"], "field": entry["field"], "action": entry["action"],
+                 "note": entry["note"], "before": entry["before"], "after": entry["after"],
+                 "alerts": entry["alerts"], "time": entry["time"]}
+                for entry in record.get("field_reviews", [])
+            ],
+            "turn_count": len(record["turns"]),
+            "photo_count": sum(bool(turn["image"]) for turn in record["turns"]),
+            "review_note": latest_review.get("note", ""),
+            "evidence_alerts": alerts,
+        }
+
     def record_response(self, record_id, record):
         response = {"id": record_id, "record": record, "pending": pending_items(record),
                     "questions": [QUESTIONS[key] for key in record["questions"]]}
         if urlsplit(self.path).query == "view=mobile":
-            latest_review = record["reviews"][-1] if record["reviews"] else {}
-            response["record"] = {
-                "task": record["task"], "version": record["version"], "status": record["status"],
-                "fields": {key: {"value": field["value"], "status": field["status"]}
-                           for key, field in record["fields"].items()},
-                "turn_count": len(record["turns"]),
-                "photo_count": sum(bool(turn["image"]) for turn in record["turns"]),
-                "review_note": latest_review.get("note", ""),
-            }
+            response["record"] = self.mobile_record(record)
         else:
             response["evidence_alerts"] = evidence_alerts(record)
         return response
@@ -127,7 +151,11 @@ class Workbench(BaseHTTPRequestHandler):
             filename, mime = ASSETS[path]
             self.send_content(200, (ROOT / "web" / filename).read_bytes(), mime)
         elif path == "/api/config":
-            self.send_json(200, {"tasks": TASKS, "mode": "model" if model_enabled() else "demo"})
+            self.send_json(200, {
+                "tasks": TASKS,
+                "mode": "model" if model_enabled() else "demo",
+                "voice": transcription_enabled(),
+            })
         elif path == "/api/health":
             self.send_json(200, {"status": "ok"})
         elif path == "/api/records":
@@ -148,6 +176,15 @@ class Workbench(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         try:
             data = self.read_json()
+            if path == "/api/transcribe":
+                # Stateless: transcription never touches the stored record.
+                audio = data.get("audio", "")
+                hint = data.get("hint", "")
+                if not isinstance(hint, str):
+                    raise ValueError("场景提示格式不正确。")
+                transcript, _ = transcribe(audio, hint[:200])
+                self.send_json(200, {"transcript": transcript})
+                return
             saved = None
             if path == "/api/records":
                 task = data.get("task")

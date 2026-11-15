@@ -67,3 +67,29 @@ class EvidenceTests(unittest.TestCase):
         review_field(record, "location", "correct", "五号点", "与现场点位标识核对")
         self.assertEqual(record["fields"]["location"]["value"], "五号点")
         self.assertEqual(record["field_reviews"][0]["note"], "与现场点位标识核对")
+
+    def test_correction_keeps_earlier_quotation_in_evidence(self):
+        record = new_record("trap")
+        apply_turn(record, "三号点看到两只疑似虫体", rules_only=True)
+        apply_turn(record, "今天上午，刚才说错了，是五号点", rules_only=True)
+
+        location = record["fields"]["location"]
+        self.assertEqual(location["value"], "五号点")
+        self.assertEqual(location["status"], "recorded")
+        # Newest statement first, original utterance still retrievable.
+        self.assertEqual([source["turn"] for source in location["evidence"]], [2, 1])
+        self.assertEqual(location["evidence"][1]["quote"], "三号点看到两只疑似虫体")
+        # The correction is still recorded as a value change with both sides.
+        change, = [item for item in record["revisions"] if item["field"] == "location"][-1:]
+        self.assertEqual(change["before"]["value"], "三号点")
+        self.assertEqual(change["after"]["value"], "五号点")
+
+    def test_repeated_correction_does_not_duplicate_evidence(self):
+        record = new_record("trap")
+        apply_turn(record, "三号点看到两只疑似虫体", rules_only=True)
+        apply_turn(record, "更正为五号点", rules_only=True)
+        apply_turn(record, "更正为五号点", rules_only=True)
+
+        sources = record["fields"]["location"]["evidence"]
+        self.assertEqual(len(sources), len({(s["turn"], s["quote"]) for s in sources}))
+        self.assertEqual(record["fields"]["location"]["value"], "五号点")

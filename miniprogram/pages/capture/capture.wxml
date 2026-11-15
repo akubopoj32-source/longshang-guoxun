@@ -4,21 +4,52 @@
     <button class="secondary compact" wx:if="{{id}}" disabled="{{busy}}" bindtap="refresh">刷新</button>
   </view>
   <view wx:if="{{error}}" class="error" aria-role="alert">{{error}}</view>
+  <view wx:if="{{notice}}" class="question">{{notice}}</view>
+  <view wx:if="{{busy && busyLabel}}" class="muted">{{busyLabel}}</view>
 
   <block wx:if="{{status}}">
     <view class="heading record-meta">
       <view class="status {{status}}">{{statusLabel}} · 第 {{version}} 版</view>
       <view class="muted">{{photoCount}} 张已留存照片</view>
     </view>
+
     <view wx:if="{{reviewNote}}" class="review-note">
       <view class="section-title">复核意见</view>
       <view class="spaced">{{reviewNote}}</view>
     </view>
 
+    <!-- 图文证据待核对：口述数量与照片可见数量不一致 -->
+    <view wx:if="{{alerts.length}}" class="card alert-card">
+      <view class="section-title">图文证据待核对</view>
+      <view class="alert-item" wx:for="{{alerts}}" wx:key="turn">
+        <view>{{item.text}}</view>
+        <text class="anchor-link" bindtap="scrollToEvidence" data-anchor="{{item.anchor}}">{{item.linkText}}</text>
+      </view>
+    </view>
+
+    <!-- 本轮录入 -->
     <view wx:if="{{editable}}" class="card">
       <view class="question">{{question}}</view>
       <label class="label" for="message">现场描述</label>
-      <textarea id="message" value="{{message}}" bindinput="editMessage" maxlength="2000" disabled="{{busy}}" placeholder="例如：三号点看到两只疑似虫体" />
+      <textarea id="message" value="{{message}}" bindinput="editMessage" maxlength="2000" disabled="{{busy}}"
+                placeholder="例如：三号点看到两只疑似虫体" auto-height="{{false}}" />
+
+      <!-- 语音输入 -->
+      <view wx:if="{{canRecord}}" class="voice">
+        <button class="secondary voice-btn {{recording ? 'voice-on' : ''}}"
+                disabled="{{busy || transcribing}}" bindtap="toggleRecord">
+          {{recording ? '停止录音 ' + recordSeconds + 's' : (voice ? '重新录音' : '按住说话·录音输入')}}
+        </button>
+        <view wx:if="{{voice && !recording}}" class="voice-meta">
+          <text class="muted">已录制 {{voiceDuration}}</text>
+          <text wx:if="{{transcribing}}" class="muted"> · 正在转写…</text>
+          <text wx:if="{{voiceReady && !transcribing}}" class="anchor-link" bindtap="retryTranscribe">重新转写</text>
+          <text class="anchor-link" bindtap="removeVoice">删除</text>
+        </view>
+        <view wx:if="{{voiceNote}}" class="muted voice-note">{{voiceNote}}</view>
+        <view wx:if="{{recording}}" class="muted voice-note">正在录音，说完后点击停止。</view>
+      </view>
+
       <image wx:if="{{photo}}" class="photo spaced" mode="aspectFit" src="{{photo}}" aria-label="待上传的巡查照片" />
       <view class="button-row spaced">
         <button class="secondary" disabled="{{busy}}" bindtap="attachPhoto">{{photo ? '更换照片' : '拍照或选照片'}}</button>
@@ -28,18 +59,125 @@
       <button wx:if="{{rulesFallback}}" class="secondary spaced" disabled="{{busy}}" bindtap="saveTurn" data-rules="yes">用规则保存本轮</button>
     </view>
 
+    <!-- 巡查字段 -->
     <view class="card">
       <view class="section-title">巡查字段</view>
       <view class="field" wx:for="{{fields}}" wx:key="key">
         <view class="label">{{item.label}}</view>
-        <view>{{item.value}} <text wx:if="{{item.state}}" class="muted">· {{item.state}}</text></view>
+        <view class="field-value">
+          <text>{{item.value}}</text>
+          <text wx:if="{{item.state}}" class="field-state state-{{item.status}}">{{item.state}}</text>
+        </view>
+        <view wx:if="{{item.reviewed}}" class="muted">{{item.reviewedAt}}</view>
+        <view wx:for="{{item.evidence}}" wx:for-item="source" wx:key="text"
+              class="evidence-link {{source.superseded ? 'evidence-superseded' : ''}}">
+          <text wx:if="{{source.superseded}}" class="superseded-tag">已被更正</text>{{source.text}}
+        </view>
       </view>
-      <view wx:if="{{pending.length}}" class="spaced">
-        <view class="section-title">待核对</view>
-        <view class="muted field" wx:for="{{pending}}" wx:key="*this">{{item}}</view>
-      </view>
-      <button wx:if="{{canSubmit}}" class="primary spaced" disabled="{{busy}}" bindtap="submitReview">提交电脑端复核</button>
+      <button wx:if="{{canSubmit}}" class="primary spaced" disabled="{{busy}}" loading="{{busy}}" bindtap="submitReview">提交电脑端复核</button>
     </view>
+
+    <!-- 待核实 -->
+    <view class="card">
+      <view class="section-title">待核实事项</view>
+      <view wx:if="{{pending.length}}">
+        <view class="muted field" wx:for="{{pending}}" wx:key="*this">· {{item}}</view>
+      </view>
+      <view wx:else class="muted">无</view>
+    </view>
+
+    <!-- 逐项复核：仅待复核状态可操作 -->
+    <view wx:if="{{status === 'pending'}}" class="card">
+      <view class="section-title">逐项复核</view>
+      <view class="muted">点选字段后可确认现值、人工更正或标记为待核实。</view>
+      <view class="field-choices">
+        <view class="chip {{reviewField === item.key ? 'chip-on' : ''}}" wx:for="{{fieldOptions}}" wx:key="key"
+              bindtap="chooseReviewField" data-key="{{item.key}}" aria-role="button">{{item.label}}</view>
+      </view>
+      <block wx:if="{{reviewField}}">
+        <view class="review-current">
+          {{reviewFieldValue}} <text wx:if="{{reviewFieldState}}" class="muted">· {{reviewFieldState}}</text>
+        </view>
+        <view wx:for="{{reviewEvidence}}" wx:key="text" class="evidence-link">{{item.text}}</view>
+        <label class="label">处理方式</label>
+        <view class="button-row">
+          <button class="chip {{reviewAction === 'confirm' ? 'chip-on' : ''}}" disabled="{{!canConfirm || busy}}"
+                  bindtap="setReviewAction" data-action="confirm">确认现值</button>
+          <button class="chip {{reviewAction === 'correct' ? 'chip-on' : ''}}" disabled="{{busy}}"
+                  bindtap="setReviewAction" data-action="correct">人工更正</button>
+          <button class="chip {{reviewAction === 'mark_unknown' ? 'chip-on' : ''}}" disabled="{{busy}}"
+                  bindtap="setReviewAction" data-action="mark_unknown">标记待核实</button>
+        </view>
+        <block wx:if="{{needsValue}}">
+          <label class="label" for="review-value">更正值</label>
+          <input id="review-value" value="{{reviewValue}}" bindinput="editReviewValue" maxlength="500" disabled="{{busy}}" />
+        </block>
+        <label class="label" for="review-note">复核依据</label>
+        <textarea id="review-note" value="{{reviewNoteInput}}" bindinput="editReviewNote" maxlength="500"
+                  disabled="{{busy}}" placeholder="填写判断依据或现场复查事项" />
+        <button class="primary spaced" disabled="{{busy}}" loading="{{busy}}" bindtap="saveFieldReview">保存字段判断</button>
+      </block>
+    </view>
+
+    <!-- 原始证据 -->
+    <view wx:if="{{turns.length}}" class="card">
+      <view class="section-title">原始证据</view>
+      <view class="turn" wx:for="{{turns}}" wx:key="id" id="{{item.anchor}}">
+        <view class="turn-head">{{item.heading}}<text wx:if="{{item.time}}" class="muted"> · {{item.time}}</text></view>
+        <view class="turn-text">{{item.messageText}}</view>
+        <image wx:if="{{item.image}}" class="photo" mode="aspectFit" src="{{item.image}}"
+               aria-label="第 {{item.id}} 轮的巡查照片" bindtap="previewImage" data-src="{{item.image}}" />
+        <view wx:if="{{item.visualText}}" class="muted">{{item.visualText}}</view>
+        <view wx:if="{{item.visibleText}}" class="muted">{{item.visibleText}}</view>
+        <view wx:if="{{item.qualityText}}" class="muted">{{item.qualityText}}</view>
+      </view>
+    </view>
+
+    <!-- 历史 -->
+    <view class="card">
+      <view class="heading history-head" bindtap="toggleHistory">
+        <view class="section-title">修订与复核历史</view>
+        <text class="muted">{{showHistory ? '收起' : '展开'}}</text>
+      </view>
+      <block wx:if="{{showHistory}}">
+        <view class="label">字段修订</view>
+        <view wx:if="{{revisions.length}}">
+          <view class="muted field" wx:for="{{revisions}}" wx:key="key">· {{item.text}}</view>
+        </view>
+        <view wx:else class="muted">暂无字段修订。</view>
+
+        <view class="label">字段复核历史</view>
+        <view wx:if="{{fieldReviews.length}}">
+          <view class="field" wx:for="{{fieldReviews}}" wx:key="key">
+            <view class="muted">· {{item.text}}</view>
+            <view wx:if="{{item.note}}" class="review-note-text">{{item.note}}</view>
+            <view wx:for="{{item.alerts}}" wx:for-item="alert" wx:key="text" class="evidence-link">{{alert.text}}</view>
+          </view>
+        </view>
+        <view wx:else class="muted">暂无字段复核。</view>
+
+        <view class="label">复核历史</view>
+        <view wx:if="{{reviews.length}}">
+          <view class="field" wx:for="{{reviews}}" wx:key="key">
+            <view class="muted">· {{item.text}}</view>
+            <view wx:if="{{item.note}}" class="review-note-text">{{item.note}}</view>
+          </view>
+        </view>
+        <view wx:else class="muted">尚未提交复核。</view>
+      </block>
+    </view>
+
+    <!-- 导出 -->
+    <view class="card">
+      <view class="section-title">导出</view>
+      <view class="muted">复查单含字段、证据原话、待核实事项与复核历史。</view>
+      <view class="button-row spaced">
+        <button class="secondary" disabled="{{busy}}" bindtap="exportChecklist">导出复查单</button>
+        <button class="secondary" disabled="{{busy}}" bindtap="exportJson">导出 JSON</button>
+        <button class="secondary" disabled="{{busy}}" bindtap="copyChecklist">复制复查单</button>
+      </view>
+    </view>
+
     <view class="muted record-id">记录编号 {{id}}</view>
   </block>
   <view wx:elif="{{busy}}" class="muted">正在读取巡查记录…</view>
