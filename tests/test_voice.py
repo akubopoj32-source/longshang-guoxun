@@ -1,4 +1,5 @@
 import base64
+import json
 import unittest
 from unittest import mock
 
@@ -53,15 +54,15 @@ class TranscriptTests(unittest.TestCase):
 
 class TranscribeTests(unittest.TestCase):
     def test_requires_configured_service(self):
-        with mock.patch.dict("os.environ", {}, clear=True):
+        with mock.patch.dict("os.environ", {"ORCHARD_MODEL_URL": "x", "ORCHARD_MODEL": "qwen3-vl-plus"}, clear=True):
             with self.assertRaises(ModelUnavailable) as caught:
                 transcribe(WAV)
         self.assertEqual(caught.exception.status, 503)
-        self.assertIn("录音留存", str(caught.exception))
+        self.assertIn("配置的语音模型", str(caught.exception))
 
     def test_unreachable_service_reports_network(self):
         environment = {"ORCHARD_MODEL_URL": "http://127.0.0.1:9/v1/chat/completions",
-                       "ORCHARD_MODEL": "fake"}
+                       "ORCHARD_VOICE_MODEL": "fake"}
         with mock.patch.dict("os.environ", environment, clear=True):
             with self.assertRaises(ModelUnavailable) as caught:
                 transcribe(WAV)
@@ -71,6 +72,23 @@ class TranscribeTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"ORCHARD_MODEL_URL": "x", "ORCHARD_MODEL": "y"}, clear=True):
             with self.assertRaisesRegex(ValueError, "请先录音"):
                 transcribe("")
+
+    @mock.patch("orchard_workbench.voice.urlopen")
+    def test_dashscope_asr_uses_its_own_model_and_data_uri(self, open_url):
+        open_url.return_value.__enter__.return_value.read.return_value = (
+            b'{"choices": [{"message": {"content": "two insects"}}]}'
+        )
+        config = {"ORCHARD_MODEL_URL": "https://example.test/v1/chat/completions",
+                  "ORCHARD_MODEL": "qwen3-vl-plus", "ORCHARD_VOICE_MODEL": "qwen3-asr-flash"}
+        with mock.patch.dict("os.environ", config, clear=True):
+            transcript, _ = transcribe(WAV, "模拟巡查")
+        payload = json.loads(open_url.call_args.args[0].data)
+        self.assertEqual(payload["model"], "qwen3-asr-flash")
+        self.assertEqual(payload["messages"][0]["content"], [{"type": "text", "text": "模拟巡查"}])
+        self.assertEqual(payload["messages"][-1]["content"], [
+            {"type": "input_audio", "input_audio": {"data": WAV}},
+        ])
+        self.assertEqual(transcript, "two insects")
 
 
 if __name__ == "__main__":

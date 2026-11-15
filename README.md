@@ -111,13 +111,14 @@ python app.py
 ```powershell
 $env:ORCHARD_MODEL_URL = 'https://your-model-provider.example/v1/chat/completions'
 $env:ORCHARD_MODEL = '服务商提供的视觉模型标识'
+$env:ORCHARD_VOICE_MODEL = 'qwen3-asr-flash'
 $env:ORCHARD_MODEL_KEY = '本机的服务密钥'
 python app.py
 ```
 
 桌面客户端可从同一个 PowerShell 窗口启动，继承这些环境变量。Docker Compose 也会读取这些变量。启用后，本轮文字、图片及用于提取的当前字段将发送到配置的模型服务。仅使用获准传输的材料，密钥通过本机环境变量配置。当前复核视图用于本地原型演示，巡查与复核共用工作台。
 
-同一组变量也用于语音转写。录音以 Chat Completions 的 `input_audio` 内容块发送到已配置的服务。`/api/config` 返回的 `voice` 表示转写接口已有模型配置，实际音频支持请用一段模拟录音验证。
+语音转写通过 `ORCHARD_VOICE_MODEL` 单独选择模型，共用上述服务地址和密钥。百炼可用 `qwen3-asr-flash` 处理录音，并继续用 `qwen3-vl-plus` 提取图文和回答知识库问题。只使用本地规则时可以省略语音变量。`/api/config` 返回的 `voice` 表示已配置语音模型，真机首次联调时请录一段模拟巡查描述核对转写。[百炼语音识别接口](https://help.aliyun.com/zh/model-studio/qwen-asr-api-reference)
 
 巡查员原话与照片可见线索分别保存。诱捕监测中，当同轮有明确口述数量且模型认为照片完整、可计数时，数量不同会列入「图文证据待核对」，并关联原话及原图。局部或模糊图优先进入补拍或待核对流程。模型服务失败时，本轮输入保留在表单中，可重试或选择「用规则保存本轮」。规则模式会保存原图，视觉识别留待后续核对。
 

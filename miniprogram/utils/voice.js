@@ -2,6 +2,8 @@ const { request } = require("./api");
 
 const maxAudioBytes = 8 * 1024 * 1024;
 const maxDuration = 120000;
+let manager;
+let activeRecording;
 
 const mimeByExtension = {
   mp3: "audio/mpeg",
@@ -15,70 +17,74 @@ const mimeByExtension = {
 };
 
 function recorder() {
-  return wx.getRecorderManager();
+  if (manager || !wx.getRecorderManager) return manager;
+  const instance = wx.getRecorderManager();
+  if (!instance) return undefined;
+  instance.onStop((result) => {
+    const recording = activeRecording;
+    activeRecording = undefined;
+    if (!recording) return;
+    if (!result?.tempFilePath) {
+      recording.reject(new Error("录音失败，请重试。"));
+    } else if (result.fileSize > maxAudioBytes) {
+      recording.reject(new Error("录音超过 8 MB，请缩短时长。"));
+    } else {
+      recording.resolve({tempFilePath: result.tempFilePath, duration: result.duration || 0});
+    }
+  });
+  instance.onError((error) => {
+    const recording = activeRecording;
+    activeRecording = undefined;
+    const denied = /auth|permission|deny/i.test(error?.errMsg || "");
+    recording?.reject(new Error(denied ? "没有麦克风权限，请在设置中允许录音。" : "录音失败，请重试。"));
+  });
+  manager = instance;
+  return manager;
 }
 
 /** True when the platform can capture audio at all. */
 function canRecord() {
   try {
-    return Boolean(wx.getRecorderManager && wx.getRecorderManager());
+    return Boolean(recorder());
   } catch {
     return false;
   }
 }
 
-/**
- * Record one clip. Resolves with { tempFilePath, duration, size } or "" when
- * the user aborts. The recorder manager is a singleton, so listeners are
- * replaced on every call to avoid stacking handlers.
- */
 function record() {
   return new Promise((resolve, reject) => {
-    const manager = recorder();
-    if (!manager) {
+    const instance = recorder();
+    if (!instance) {
       reject(new Error("当前环境不支持录音。"));
       return;
     }
-    let result = null;
-    manager.onStart(() => {});
-    manager.onStop((res) => {
-      if (!res || !res.tempFilePath) {
-        reject(new Error("录音失败，请重试。"));
-        return;
-      }
-      if (res.fileSize > maxAudioBytes) {
-        reject(new Error("录音超过 8 MB，请缩短时长。"));
-        return;
-      }
-      resolve({
-        tempFilePath: res.tempFilePath,
-        duration: res.duration || 0,
-        size: res.fileSize || 0,
+    if (activeRecording) {
+      reject(new Error("上一段录音正在结束，请稍后重试。"));
+      return;
+    }
+    activeRecording = {resolve, reject};
+    try {
+      instance.start({
+        duration: maxDuration,
+        format: "mp3",
+        sampleRate: 16000,
+        numberOfChannels: 1,
+        encodeBitRate: 48000,
       });
-    });
-    manager.onError((error) => {
-      const message = (error && error.errMsg) || "";
-      reject(new Error(/auth|permission|deny/i.test(message)
-        ? "没有麦克风权限，请在设置中允许录音。"
-        : "录音失败，请重试。"));
-    });
-    manager.start({
-      duration: maxDuration,
-      format: "mp3",
-      sampleRate: 16000,
-      numberOfChannels: 1,
-      encodeBitRate: 48000,
-    });
-    // Swallow the unused binding so linters do not flag it.
-    void result;
+    } catch {
+      activeRecording = undefined;
+      reject(new Error("无法开始录音，请检查麦克风权限。"));
+    }
   });
 }
 
 function stop() {
   try {
-    recorder().stop();
+    if (activeRecording) manager.stop();
   } catch {
-    /* recorder may not be active */
+    const recording = activeRecording;
+    activeRecording = undefined;
+    recording?.reject(new Error("录音已中断，请重新录制。"));
   }
 }
 

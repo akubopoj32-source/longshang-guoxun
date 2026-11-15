@@ -1,5 +1,5 @@
 const { spawnSync } = require("node:child_process");
-const { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } = require("node:fs");
+const { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } = require("node:fs");
 const { dirname, join } = require("node:path");
 
 if (process.platform !== "win32") throw new Error("此打包脚本需要 Windows。");
@@ -22,6 +22,16 @@ function cleanup(path, parent) {
   rmSync(absolute, { recursive: true });
 }
 
+function copyDirectory(source, destination) {
+  const result = spawnSync("robocopy.exe", [source, destination, "/E", "/R:1", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS", "/NP"], {
+    stdio: "inherit",
+  });
+  // Robocopy uses exit codes below 8 for successful copies and differences.
+  if (result.error || result.status === null || result.status >= 8) {
+    throw result.error || new Error(`复制构建资源失败（代码 ${result.status}）：${source}`);
+  }
+}
+
 try {
   const result = spawnSync(process.env.ORCHARD_PYTHON || "python", [
     "-m", "PyInstaller", "--noconfirm", "--onedir", "--name", "orchard-backend",
@@ -32,7 +42,7 @@ try {
   if (result.error || result.status !== 0) throw result.error || new Error("Python 服务打包失败。");
 
   const electron = require("electron");
-  cpSync(dirname(electron), staging, { recursive: true });
+  copyDirectory(dirname(electron), staging);
   renameSync(join(staging, "electron.exe"), join(staging, "LongshangGuoxun.exe"));
   const resources = join(staging, "resources");
   rmSync(join(resources, "default_app.asar"), { force: true });
@@ -41,7 +51,7 @@ try {
   for (const file of ["package.json", "main.cjs", "preload.cjs"]) {
     copyFileSync(join(__dirname, file), join(main, file));
   }
-  cpSync(join(build, "dist", "orchard-backend"), join(resources, "backend"), { recursive: true });
+  copyDirectory(join(build, "dist", "orchard-backend"), join(resources, "backend"));
   renameSync(staging, target);
   console.log(join(target, "LongshangGuoxun.exe"));
 } finally {

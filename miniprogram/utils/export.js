@@ -85,6 +85,11 @@ function writeFile(name, content) {
 
 /** Write the file then hand it to the share sheet; fall back to copy. */
 async function shareFile(name, content) {
+  const copyInstead = async () => {
+    await copyText(content);
+    return "当前环境无法发送文件，内容已复制到剪贴板，可粘贴保存。";
+  };
+  if (typeof wx.shareFileMessage !== "function") return copyInstead();
   const path = await writeFile(name, content);
   return new Promise((resolve, reject) => {
     wx.shareFileMessage({
@@ -97,11 +102,7 @@ async function shareFile(name, content) {
           resolve("");
           return;
         }
-        wx.setClipboardData({
-          data: content,
-          success() { resolve("当前环境无法发送文件，内容已复制到剪贴板，可粘贴保存。"); },
-          fail() { reject(new Error("导出失败，请稍后重试。")); },
-        });
+        copyInstead().then(resolve, reject);
       },
     });
   });

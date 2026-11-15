@@ -11,7 +11,7 @@ Page({
     editable: false, canSubmit: false, photoCount: 0, question: "", reviewNote: "",
     message: "", photo: "", busy: false, busyLabel: "", error: "", notice: "",
     rulesFallback: false, showHistory: false,
-    recording: false, recordSeconds: 0, voice: "", voiceDuration: "", transcribing: false,
+    recording: false, recordSeconds: 0, voice: "", voiceDuration: "", transcribing: false, voiceTranscribed: false,
     canRecord: false, voiceReady: false, voiceNote: "",
     reviewField: "", reviewAction: "confirm", reviewValue: "", reviewNoteInput: "",
     reviewFieldLabel: "", reviewFieldValue: "", reviewFieldState: "", reviewEvidence: [],
@@ -34,6 +34,7 @@ Page({
   },
 
   onUnload() {
+    this.unloaded = true;
     this.clearTimer();
     if (this.data.recording) voice.stop();
   },
@@ -43,7 +44,6 @@ Page({
     if (this.data.recording) {
       voice.stop();
       this.clearTimer();
-      this.setData({ recording: false });
     }
   },
 
@@ -138,16 +138,18 @@ Page({
     try {
       const clip = await voice.record();
       this.clearTimer();
+      if (this.unloaded) return;
       this.setData({ recording: false });
       if (!clip) return;
       this.setData({
         voice: clip.tempFilePath,
         voiceDuration: voice.formatDuration(clip.duration || this.data.recordSeconds * 1000),
+        voiceTranscribed: false,
       });
       await this.transcribeVoice();
     } catch (error) {
       this.clearTimer();
-      this.setData({ recording: false, error: error.message });
+      if (!this.unloaded) this.setData({ recording: false, error: error.message });
     }
   },
 
@@ -160,23 +162,25 @@ Page({
 
   /** Transcribe the current clip and append it to the description. */
   transcribeVoice() {
-    if (!this.data.voice) return Promise.resolve();
+    if (!this.data.voice || this.data.voiceTranscribed) return Promise.resolve();
     if (!this.data.voiceReady) {
-      this.setData({ notice: "录音已留存，但服务端未配置语音转写，请手动补充文字。" });
+      this.setData({ notice: "录音保留在当前页面，请手动补充文字。" });
       return Promise.resolve();
     }
     return this.run(async () => {
       this.setData({ transcribing: true });
       const transcript = await voice.transcribe(this.data.voice, this.data.title);
       const merged = [this.data.message.trim(), transcript].filter(Boolean).join(" ");
-      this.setData({ message: merged, notice: "语音已转写，请核对文字后再保存。" });
+      if (merged.length > 2000) throw new Error("描述与转写合计超过 2000 字，请缩短描述后重试。");
+      this.setData({ message: merged, voiceTranscribed: true, notice: "语音已转写，请核对文字后再保存。" });
     }, "正在转写语音…").finally(() => this.setData({ transcribing: false }));
   },
 
   removeVoice() {
+    if (this.data.transcribing) return;
     voice.stop();
     this.clearTimer();
-    this.setData({ voice: "", voiceDuration: "", recording: false, recordSeconds: 0 });
+    this.setData({ voice: "", voiceDuration: "", voiceTranscribed: false, recording: false, recordSeconds: 0 });
   },
 
   /** Re-run transcription for the current clip. */
@@ -185,6 +189,7 @@ Page({
   },
 
   saveTurn(event) {
+    if (this.data.recording) return;
     const rulesOnly = event.currentTarget.dataset.rules === "yes";
     return this.run(async () => {
       const { id, version, status, message, photo } = this.data;
@@ -196,13 +201,14 @@ Page({
       this.apply(result);
       this.setData({
         message: "", photo: "", rulesFallback: false,
-        voice: "", voiceDuration: "", recordSeconds: 0,
+        voice: "", voiceDuration: "", voiceTranscribed: false, recordSeconds: 0,
         notice: "本轮输入已保存。",
       });
-    }, "正在处理本轮输入…");
+    }, "正在处理本轮输入…", true);
   },
 
   submitReview() {
+    if (this.data.recording) return;
     return this.run(async () => {
       const { id, version, status, message, photo } = this.data;
       if (message.trim() || photo) throw new Error("请先处理本轮输入，再提交复核。");
@@ -305,14 +311,14 @@ Page({
     }, "正在生成复查单…");
   },
 
-  async run(action, label = "正在处理…") {
+  async run(action, label = "正在处理…", allowRulesFallback = false) {
     if (this.data.busy) return;
     this.setData({ busy: true, busyLabel: label, error: "", notice: "" });
     try {
       await action();
     } catch (error) {
       this.setData({ error: error.message });
-      if (error.code === "model_unavailable") this.setData({ rulesFallback: true });
+      if (allowRulesFallback && error.code === "model_unavailable") this.setData({ rulesFallback: true });
       // A stale write means another page changed the record; reload so the
       // user works against the current version instead of retrying blindly.
       if (error.code === "stale") {

@@ -1,9 +1,7 @@
 """Optional speech-to-text boundary for voice inspection notes.
 
-The workbench stays dependency-free: transcription rides on the same
-Chat Completions endpoint configured for image extraction, using the
-OpenAI ``input_audio`` content part. When the configured service does not
-accept audio the caller falls back to keeping the recording as evidence.
+Transcription uses an explicitly configured audio model on the same
+Chat Completions endpoint as image extraction.
 """
 
 import base64
@@ -42,7 +40,7 @@ TRANSCRIBE_PROMPT = (
 
 
 def transcription_enabled():
-    return bool(os.getenv("ORCHARD_MODEL_URL") and os.getenv("ORCHARD_MODEL"))
+    return bool(os.getenv("ORCHARD_MODEL_URL") and os.getenv("ORCHARD_VOICE_MODEL", "").strip())
 
 
 def parse_audio(data):
@@ -87,24 +85,27 @@ def transcribe(data, hint=""):
     parsed = parse_audio(data)
     if parsed is None:
         raise ValueError("请先录音。")
-    _mime, payload, audio_format = parsed
+    mime, payload, audio_format = parsed
 
     if not transcription_enabled():
         raise ModelUnavailable(
-            "语音转写需要已配置的模型服务。可先录音留存，或在电脑端用文字记录本轮。",
+            "语音转写需要已配置的语音模型。可在当前页面重试，或手动录入文字。",
             503,
         )
 
-    content = [{
-        "type": "input_audio",
-        "input_audio": {"data": payload, "format": audio_format},
-    }]
-    if hint:
-        content.append({"type": "text", "text": f"场景提示：{hint}"})
-    payload_body = {"model": os.environ["ORCHARD_MODEL"], "messages": [
-        {"role": "system", "content": TRANSCRIBE_PROMPT},
-        {"role": "user", "content": content},
-    ], "temperature": 0}
+    model = os.environ["ORCHARD_VOICE_MODEL"].strip()
+    if model == "qwen3-asr-flash" or model.startswith("qwen3-asr-flash-"):
+        messages = [{"role": "system", "content": [{"type": "text", "text": hint}]}] if hint else []
+        content = [{"type": "input_audio", "input_audio": {"data": f"data:{mime};base64,{payload}"}}]
+        options = {"asr_options": {"enable_itn": False}}
+    else:
+        messages = [{"role": "system", "content": TRANSCRIBE_PROMPT}]
+        content = [{"type": "input_audio", "input_audio": {"data": payload, "format": audio_format}}]
+        if hint:
+            content.append({"type": "text", "text": f"场景提示：{hint}"})
+        options = {"temperature": 0}
+    messages.append({"role": "user", "content": content})
+    payload_body = {"model": model, "messages": messages, "stream": False, **options}
     headers = {"Content-Type": "application/json"}
     if key := os.getenv("ORCHARD_MODEL_KEY"):
         headers["Authorization"] = "Bearer " + key
@@ -128,7 +129,7 @@ def transcribe(data, hint=""):
             raise ModelUnavailable("语音转写服务暂时限流，请稍后重试。", 503) from error
         if error.code in (400, 404, 415, 422):
             raise ModelUnavailable(
-                "当前模型服务不接受语音输入。可先录音留存，或改用文字输入。", 422) from error
+                "当前模型服务不接受这段音频，请检查语音模型和音频格式，或改用文字输入。", 422) from error
         raise ModelUnavailable("语音转写服务暂时不可用，请稍后重试。") from error
     except (URLError, TimeoutError, OSError) as error:
         if isinstance(error, TimeoutError) or isinstance(getattr(error, "reason", None), TimeoutError):

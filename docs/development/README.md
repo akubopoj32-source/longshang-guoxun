@@ -13,3 +13,4 @@
 - [2026-11-13 桌面待复核队列与证据对照](2026-11-13-desktop-review-workspace.md)
 - [2026-11-13 桌面巡查进度、字段查资料与连接恢复](2026-11-13-desktop-progress-knowledge-reconnect.md)
 - [2026-11-15 小程序与桌面复核工作台联调](2026-11-15-integration-mini-desktop.md)
+- [2026-11-15 双端功能验收与发布修复](2026-11-15-integration-acceptance.md)

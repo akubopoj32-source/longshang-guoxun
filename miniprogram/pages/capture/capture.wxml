@@ -43,8 +43,8 @@
         <view wx:if="{{voice && !recording}}" class="voice-meta">
           <text class="muted">已录制 {{voiceDuration}}</text>
           <text wx:if="{{transcribing}}" class="muted"> · 正在转写…</text>
-          <text wx:if="{{voiceReady && !transcribing}}" class="anchor-link" bindtap="retryTranscribe">重新转写</text>
-          <text class="anchor-link" bindtap="removeVoice">删除</text>
+          <text wx:if="{{voiceReady && !transcribing && !voiceTranscribed}}" class="anchor-link" bindtap="retryTranscribe">重新转写</text>
+          <text wx:if="{{!transcribing}}" class="anchor-link" bindtap="removeVoice">删除录音</text>
         </view>
         <view wx:if="{{voiceNote}}" class="muted voice-note">{{voiceNote}}</view>
         <view wx:if="{{recording}}" class="muted voice-note">正在录音，说完后点击停止。</view>
@@ -55,8 +55,8 @@
         <button class="secondary" disabled="{{busy}}" bindtap="attachPhoto">{{photo ? '更换照片' : '拍照或选照片'}}</button>
         <button wx:if="{{photo}}" class="secondary" disabled="{{busy}}" bindtap="removePhoto">移除</button>
       </view>
-      <button class="primary spaced" loading="{{busy}}" disabled="{{busy}}" bindtap="saveTurn">处理本轮输入</button>
-      <button wx:if="{{rulesFallback}}" class="secondary spaced" disabled="{{busy}}" bindtap="saveTurn" data-rules="yes">用规则保存本轮</button>
+      <button class="primary spaced" loading="{{busy}}" disabled="{{busy || recording}}" bindtap="saveTurn">处理本轮输入</button>
+      <button wx:if="{{rulesFallback}}" class="secondary spaced" disabled="{{busy || recording}}" bindtap="saveTurn" data-rules="yes">用规则保存本轮</button>
     </view>
 
     <!-- 巡查字段 -->
@@ -74,7 +74,7 @@
           <text wx:if="{{source.superseded}}" class="superseded-tag">已被更正</text>{{source.text}}
         </view>
       </view>
-      <button wx:if="{{canSubmit}}" class="primary spaced" disabled="{{busy}}" loading="{{busy}}" bindtap="submitReview">提交电脑端复核</button>
+      <button wx:if="{{canSubmit}}" class="primary spaced" disabled="{{busy || recording}}" loading="{{busy}}" bindtap="submitReview">提交电脑端复核</button>
     </view>
 
     <!-- 待核实 -->
