@@ -11,6 +11,7 @@ services:
     environment:
       ORCHARD_MODEL_URL: ${ORCHARD_MODEL_URL:-}
       ORCHARD_MODEL: ${ORCHARD_MODEL:-}
+      ORCHARD_VOICE_MODEL: ${ORCHARD_VOICE_MODEL:-}
       ORCHARD_MODEL_KEY: ${ORCHARD_MODEL_KEY:-}
     restart: unless-stopped
 

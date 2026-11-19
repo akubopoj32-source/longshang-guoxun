@@ -142,6 +142,14 @@ def apply_candidate(record, candidate, message, turn):
             status = "conflict"
         if not before.get("review_version"):
             sources = before["evidence"] + sources
+    elif before and correction and before.get("evidence"):
+        # A correction supersedes the value but must not erase the trail: keep
+        # the earlier quotations after the new one so a reviewer can still see
+        # what the inspector originally said.
+        sources = sources + [
+            {**source, "superseded": True} for source in before["evidence"]
+            if (source.get("turn"), source.get("quote")) != (turn, quote)
+        ]
     set_field(record, field, {"value": value, "status": status, "evidence": sources})
     return True
 
@@ -236,6 +244,8 @@ def evidence_alerts(record):
     reported = int(value) if value.isdecimal() else digits[value]
     alerts = []
     for evidence in quantity["evidence"]:
+        if evidence.get("superseded") or quantity["value"] not in evidence.get("quote", ""):
+            continue
         if HEDGED.search(evidence["quote"]) or re.search(r"约|左右|上下", evidence["quote"]):
             continue
         turn = record["turns"][evidence["turn"] - 1]

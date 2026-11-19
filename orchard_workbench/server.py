@@ -1,6 +1,7 @@
 """Run the local orchard workbench with Python's standard library."""
 
 import argparse
+import base64
 import json
 import os
 import secrets
@@ -17,6 +18,7 @@ from .extraction import ModelUnavailable, model_enabled
 from .knowledge import answer_question, source_url
 from .orchard import QUESTIONS, TASKS, apply_turn, evidence_alerts, new_record, pending_items, review, review_field
 from .storage import RecordStore
+from .voice import MAX_AUDIO_BYTES, transcribe, transcription_enabled
 
 
 ROOT = Path(__file__).resolve().parent
@@ -26,6 +28,7 @@ ASSETS = {
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
 MAX_REQUEST = 6 * 1024 * 1024
+MAX_TRANSCRIBE_REQUEST = ((MAX_AUDIO_BYTES + 2) // 3) * 4 + 4096
 
 
 class Workbench(BaseHTTPRequestHandler):
@@ -53,28 +56,50 @@ class Workbench(BaseHTTPRequestHandler):
         self.send_content(status, json.dumps(data, ensure_ascii=False).encode(),
                           "application/json; charset=utf-8")
 
+    def mobile_record(self, record):
+        """Trim a record for the mini program: keep the evidence chain, drop bulk."""
+        latest_review = record["reviews"][-1] if record["reviews"] else {}
+        alerts = evidence_alerts(record)
+        return {
+            "task": record["task"], "version": record["version"], "status": record["status"],
+            "fields": {key: {"value": field["value"], "status": field["status"],
+                             "review_version": field.get("review_version"),
+                             "evidence": field.get("evidence", [])}
+                       for key, field in record["fields"].items()},
+            "turns": [{
+                "id": turn["id"], "message": turn["message"], "has_image": bool(turn.get("image")),
+                "visual": turn.get("visual", ""), "photo_quality": turn.get("photo_quality", "unassessed"),
+                "extraction_mode": turn.get("extraction_mode"), "visible_count": turn.get("visible_count"),
+                "photo_unavailable": turn.get("photo_unavailable", False), "time": turn.get("time"),
+            } for turn in record["turns"]],
+            "revisions": record["revisions"],
+            "reviews": record["reviews"],
+            "field_reviews": [
+                {"version": entry["version"], "field": entry["field"], "action": entry["action"],
+                 "note": entry["note"], "before": entry["before"], "after": entry["after"],
+                 "alerts": entry["alerts"], "time": entry["time"]}
+                for entry in record.get("field_reviews", [])
+            ],
+            "turn_count": len(record["turns"]),
+            "photo_count": sum(bool(turn["image"]) for turn in record["turns"]),
+            "review_note": latest_review.get("note", ""),
+            "evidence_alerts": alerts,
+        }
+
     def record_response(self, record_id, record):
         response = {"id": record_id, "record": record, "pending": pending_items(record),
                     "questions": [QUESTIONS[key] for key in record["questions"]]}
         if urlsplit(self.path).query == "view=mobile":
-            latest_review = record["reviews"][-1] if record["reviews"] else {}
-            response["record"] = {
-                "task": record["task"], "version": record["version"], "status": record["status"],
-                "fields": {key: {"value": field["value"], "status": field["status"]}
-                           for key, field in record["fields"].items()},
-                "turn_count": len(record["turns"]),
-                "photo_count": sum(bool(turn["image"]) for turn in record["turns"]),
-                "review_note": latest_review.get("note", ""),
-            }
+            response["record"] = self.mobile_record(record)
         else:
             response["evidence_alerts"] = evidence_alerts(record)
         return response
 
-    def read_json(self):
+    def read_json(self, limit=MAX_REQUEST):
         if self.headers.get_content_type() != "application/json":
             raise ValueError("请求格式应为 JSON。")
         size = int(self.headers.get("Content-Length", "0"))
-        if not 0 < size <= MAX_REQUEST:
+        if not 0 < size <= limit:
             raise ValueError("请求为空或文件过大。")
         data = json.loads(self.rfile.read(size))
         if not isinstance(data, dict):
@@ -108,7 +133,11 @@ class Workbench(BaseHTTPRequestHandler):
             filename, mime = ASSETS[path]
             self.send_content(200, (ROOT / "web" / filename).read_bytes(), mime)
         elif path == "/api/config":
-            self.send_json(200, {"tasks": TASKS, "mode": "model" if model_enabled() else "demo"})
+            self.send_json(200, {
+                "tasks": TASKS,
+                "mode": "model" if model_enabled() else "demo",
+                "voice": transcription_enabled(),
+            })
         elif path == "/api/health":
             self.server.store.check()
             self.send_json(200, {"status": "ok"})
@@ -126,23 +155,51 @@ class Workbench(BaseHTTPRequestHandler):
         elif path == "/api/records":
             self.send_json(200, {"records": self.server.store.list_records()})
         elif path.startswith("/api/records/"):
-            record_id = path.removeprefix("/api/records/")
+            record_id, _, attachment = path.removeprefix("/api/records/").partition("/")
             saved = self.server.store.load(record_id)
             if saved is None:
                 self.send_json(404, {"error": "记录不存在。"})
+            elif attachment:
+                self.send_record_photo(saved[0], attachment)
             else:
                 self.send_json(200, self.record_response(record_id, saved[0]))
         else:
             self.send_json(404, {"error": "页面不存在。"})
+
+    def send_record_photo(self, record, attachment):
+        parts = attachment.split("/")
+        if len(parts) == 3 and parts[0] == "turns" and parts[2] == "photo":
+            for turn in record["turns"]:
+                if str(turn["id"]) == parts[1] and turn.get("image"):
+                    header, _, payload = turn["image"].partition(",")
+                    mime = {"data:image/jpeg;base64": "image/jpeg", "data:image/png;base64": "image/png",
+                            "data:image/webp;base64": "image/webp"}.get(header)
+                    if mime:
+                        try:
+                            content = base64.b64decode(payload, validate=True)
+                        except ValueError:
+                            break
+                        self.send_content(200, content, mime)
+                        return
+        self.send_json(404, {"error": "原图不存在。"})
 
     def do_POST(self):
         if not self.authorized():
             return
         path = urlsplit(self.path).path
         try:
-            data = self.read_json()
+            data = self.read_json(MAX_TRANSCRIBE_REQUEST if path == "/api/transcribe" else MAX_REQUEST)
             if path == "/api/knowledge/ask":
                 self.send_json(200, answer_question(data.get("question")))
+                return
+            if path == "/api/transcribe":
+                # Stateless: transcription never touches the stored record.
+                audio = data.get("audio", "")
+                hint = data.get("hint", "")
+                if not isinstance(hint, str):
+                    raise ValueError("场景提示格式不正确。")
+                transcript, _ = transcribe(audio, hint[:200])
+                self.send_json(200, {"transcript": transcript})
                 return
             write_version = None
             if path == "/api/records":

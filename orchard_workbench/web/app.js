@@ -359,7 +359,7 @@ function selectField(key, turn) {
     renderFieldReview(true);
   }
   const alert = key === "quantity" ? state.evidence_alerts?.at(-1) : null;
-  const fieldEvidence = state.record.fields[key]?.evidence?.at(-1);
+  const fieldEvidence = state.record.fields[key]?.evidence?.findLast((item) => !item.superseded);
   selectedTurn = turn ?? alert?.turn ?? fieldEvidence?.turn ?? selectedTurn;
   renderEvidence();
 }
@@ -376,10 +376,12 @@ function renderEvidence() {
   }
   selectedTurn = turn.id;
   const field = record.fields[selectedField];
-  const linkedTurns = new Set(field?.evidence?.map((item) => item.turn));
+  const effectiveTurns = new Set(field?.evidence?.filter((item) => !item.superseded).map((item) => item.turn));
+  const historicalTurns = new Set(field?.evidence?.filter((item) => item.superseded).map((item) => item.turn));
   for (const option of $("evidence-turn").options) {
     const number = Number(option.value);
-    option.textContent = `第 ${number} 轮${linkedTurns.has(number) ? " · 字段依据" : ""}`;
+    const label = effectiveTurns.has(number) ? " · 字段依据" : historicalTurns.has(number) ? " · 历史依据" : "";
+    option.textContent = `第 ${number} 轮${label}`;
   }
   $("evidence-turn").value = turn.id;
   const source = {model: "图文模型", rules: "本地规则"}[turn.extraction_mode];
@@ -387,9 +389,11 @@ function renderEvidence() {
   $("evidence-message").textContent = turn.message || "本轮未填写文字。";
   const label = tasks[record.task].fields[selectedField];
   const linked = field?.evidence?.filter((item) => item.turn === turn.id) || [];
-  const quotes = [...new Set(linked.map((item) => item.quote).filter(Boolean))];
+  const quotes = [...new Set(linked.map((item) => item.quote
+    ? item.quote + (item.superseded ? "（已被更正）" : "") : "").filter(Boolean))];
+  const linkage = linked.every((item) => item.superseded) ? "历史依据" : "字段依据";
   $("evidence-linkage").textContent = linked.length
-    ? `${label}依据${quotes.length ? ` · ${quotes.join(" / ")}` : " · 本轮原图"}`
+    ? `${label}${linkage}${quotes.length ? ` · ${quotes.join(" / ")}` : " · 本轮原图"}`
     : `本轮未关联到「${label}」字段。`;
   $("evidence-photo").hidden = !turn.image;
   $("evidence-no-photo").hidden = Boolean(turn.image);
@@ -496,7 +500,7 @@ function exportChecklist() {
       ? `- **${label}** · ${markdownText(field.value)}（${fieldStates[field.status]}）`
       : `- **${label}** · 待补充`);
     for (const evidence of field?.evidence || []) {
-      lines.push(`  - 第 ${evidence.turn} 轮${evidence.quote ? `原话「${markdownText(evidence.quote)}」` : "原图"}`);
+      lines.push(`  - 第 ${evidence.turn} 轮${evidence.quote ? `原话「${markdownText(evidence.quote)}」` : "原图"}${evidence.superseded ? "（已被更正）" : ""}`);
     }
   }
   lines.push("", "## 待核实事项", "", ...(state.pending.length ? state.pending.map((item) => `- ${markdownText(item)}`) : ["无"]));

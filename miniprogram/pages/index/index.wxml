@@ -9,31 +9,53 @@
     <input id="origin" value="{{origin}}" bindinput="editOrigin" disabled="{{busy}}" placeholder="http://192.168.1.10:8765" />
     <label class="label" for="token">联调令牌</label>
     <input id="token" value="{{token}}" bindinput="editToken" disabled="{{busy}}" password="{{true}}" />
-    <button class="primary spaced" disabled="{{busy}}" bindtap="connect">连接服务</button>
+    <view class="button-row spaced">
+      <button class="primary" disabled="{{busy}}" loading="{{busy}}" bindtap="connect">连接服务</button>
+      <button wx:if="{{origin}}" class="secondary" disabled="{{busy}}" bindtap="forgetService">清除</button>
+    </view>
+    <view class="muted spaced">手机与电脑需连接同一可信 Wi-Fi。电脑运行 ipconfig 查看 Wi-Fi 网卡的 IPv4 地址。</view>
   </view>
 
   <view wx:if="{{error}}" class="error" aria-role="alert">{{error}}</view>
+  <view wx:if="{{notice}}" class="question">{{notice}}</view>
+
   <block wx:if="{{connected}}">
+    <view wx:if="{{resumeId}}" class="resume" bindtap="resumeRecord" aria-role="button">
+      <text>继续上次的巡查记录</text>
+      <text class="muted resume-id">#{{resumeShort}}</text>
+    </view>
+
     <view class="card">
       <view wx:if="{{mode === 'demo'}}" class="muted">规则演示 · 照片留存供人工查看</view>
       <view wx:else class="muted">图文模型模式 · 仅上传获准使用的材料</view>
       <picker range="{{tasks}}" range-key="label" value="{{taskIndex}}" bindchange="chooseTask" disabled="{{busy}}">
         <view class="picker spaced">{{tasks[taskIndex].label}} <text class="muted">更改类型</text></view>
       </picker>
-      <button class="primary spaced" disabled="{{busy}}" bindtap="createRecord">新建巡查</button>
+      <button class="primary spaced" disabled="{{busy}}" loading="{{busy}}" bindtap="createRecord">新建巡查</button>
     </view>
 
     <view class="heading list-heading">
-      <view class="section-title">最近更新</view>
+      <view class="section-title">巡查列表<text class="muted"> · 共 {{totalCount}} 条</text></view>
       <button class="secondary compact" disabled="{{busy}}" bindtap="refresh">刷新</button>
     </view>
-    <view wx:if="{{!records.length}}" class="muted">暂无巡查记录。</view>
-    <view class="card record {{item.status}}" wx:for="{{records}}" wx:key="id" bindtap="openRecord" data-id="{{item.id}}" aria-role="button">
+
+    <input class="search" type="text" value="{{query}}" bindinput="editQuery" placeholder="搜索点位、任务类型或记录编号" confirm-type="search" />
+    <scroll-view class="chips" scroll-x="{{true}}">
+      <view class="chip {{filter === item.key ? 'chip-on' : ''}}" wx:for="{{filters}}" wx:key="key"
+            bindtap="chooseFilter" data-key="{{item.key}}" aria-role="button">{{item.label}}</view>
+    </scroll-view>
+
+    <view wx:if="{{!visibleRecords.length}}" class="muted">
+      {{totalCount ? '没有符合筛选条件的记录。' : '暂无巡查记录。'}}
+    </view>
+    <view class="card record {{item.status}}" wx:for="{{visibleRecords}}" wx:key="id"
+          bindtap="openRecord" data-id="{{item.id}}" aria-role="button">
       <view class="heading">
         <view class="section-title">{{item.location}}</view>
         <view class="status">{{item.statusLabel}}</view>
       </view>
       <view class="muted">{{item.taskLabel}} · #{{item.shortId}}</view>
+      <view wx:if="{{item.activity}}" class="muted">{{item.activity}}</view>
     </view>
   </block>
   <view wx:elif="{{busy}}" class="muted">正在连接巡查服务…</view>
