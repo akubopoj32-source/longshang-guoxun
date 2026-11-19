@@ -26,19 +26,34 @@ function saveLastRecord(id) {
   wx.setStorageSync(lastRecordKey, id);
 }
 
-function request(path, data, options = connection()) {
+function request(path, data, options = connection(), connectionTimeout) {
   if (!options.origin || !options.token) {
     return Promise.reject(Object.assign(new Error("请先配置服务地址和联调令牌。"), { code: "no_connection" }));
   }
   return new Promise((resolve, reject) => {
-    wx.request({
+    const timeoutError = () => Object.assign(new Error("等待巡查服务响应超时，请稍后重试。"), { code: "network" });
+    const requestOptions = {
       url: `${options.origin}${path}`,
       method: data ? "POST" : "GET",
       data,
-      timeout: path === "/api/transcribe" ? 65000 : 30000,
+      timeout: connectionTimeout ?? (path === "/api/transcribe" ? 65000 : 30000),
       header: { "content-type": "application/json", "X-Orchard-Token": options.token },
-      success({ statusCode, data: result }) {
-        if (statusCode >= 200 && statusCode < 300) {
+      success({ statusCode, data: raw }) {
+        clearTimeout(deadline);
+        const ok = statusCode >= 200 && statusCode < 300;
+        let result = raw;
+        if (typeof raw === "string") {
+          try {
+            result = JSON.parse(raw);
+          } catch {
+            if (ok) {
+              reject(new Error("巡查服务返回的内容无法解析。"));
+              return;
+            }
+            result = undefined;
+          }
+        }
+        if (ok) {
           resolve(result);
           return;
         }
@@ -49,13 +64,24 @@ function request(path, data, options = connection()) {
         reject(Object.assign(new Error(message), { status: statusCode, code }));
       },
       fail(detail) {
+        clearTimeout(deadline);
         const timedOut = /timeout/i.test((detail && detail.errMsg) || "");
-        reject(Object.assign(
-          new Error(timedOut ? "等待巡查服务响应超时，请稍后重试。" : "无法连接巡查服务，请检查网络或刷新记录确认提交状态。"),
-          { code: "network" },
+        reject(timedOut ? timeoutError() : Object.assign(
+          new Error("无法连接巡查服务，请检查网络或刷新记录确认提交状态。"), { code: "network" },
         ));
       },
-    });
+    };
+    let task;
+    const deadline = connectionTimeout ? setTimeout(() => {
+      reject(timeoutError());
+      task?.abort();
+    }, connectionTimeout) : undefined;
+    try {
+      task = wx.request(requestOptions);
+    } catch (error) {
+      clearTimeout(deadline);
+      reject(error);
+    }
   });
 }
 

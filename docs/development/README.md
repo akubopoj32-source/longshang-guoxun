@@ -15,3 +15,4 @@
 - [2026-11-15 小程序与桌面复核工作台联调](2026-11-15-integration-mini-desktop.md)
 - [2026-11-15 双端功能验收与发布修复](2026-11-15-integration-acceptance.md)
 - [2026-11-19 双端合并与主线开发交接](2026-11-19-workflow-main-handoff.md)
+- [2026-11-19 小程序连接超时与状态提示](2026-11-19-miniprogram-connection-timeout.md)

@@ -12,9 +12,11 @@ const filters = [
   { key: "returned", label: "已退回" },
 ];
 
+const connectionTimeout = 10000;
+
 Page({
   data: {
-    origin: "", token: "", showSettings: false, busy: false, error: "", notice: "",
+    origin: "", token: "", showSettings: false, busy: false, connectionStage: "", error: "", notice: "",
     connected: false, tasks: [], taskIndex: 0, filter: "", query: "",
     filters, records: [], visibleRecords: [], totalCount: 0, mode: "", resumeId: "", resumeShort: "",
   },
@@ -56,9 +58,14 @@ Page({
   },
 
   async loadRecords(options) {
-    const [config, result] = await Promise.all([
-      request("/api/config", undefined, options), request("/api/records", undefined, options),
-    ]);
+    const config = await this.loadConnectionData("/api/config", "读取任务配置", options);
+    if (!config || !config.tasks || typeof config.tasks !== "object" || Array.isArray(config.tasks)) {
+      throw new Error("巡查服务返回的任务配置格式无效。");
+    }
+    const result = await this.loadConnectionData("/api/records", "读取巡查列表", options);
+    if (!Array.isArray(result?.records)) {
+      throw new Error("巡查服务返回的记录列表格式无效。");
+    }
     const tasks = Object.entries(config.tasks).map(([key, task]) => ({ key, label: task.label }));
     this.config = config;
     this.allRecords = result.records.map((record) => ({
@@ -71,11 +78,20 @@ Page({
       statusLabel: statusNames[record.status] || record.status,
       activity: formatTime(record.activity_at),
     }));
-    this.setData({ tasks, mode: config.mode, connected: true, totalCount: this.allRecords.length });
-    this.renderRecords();
+    this.renderRecords({ tasks, mode: config.mode, connected: true, totalCount: this.allRecords.length });
   },
 
-  renderRecords() {
+  async loadConnectionData(path, label, options) {
+    this.setData({ connectionStage: `正在${label}…` });
+    try {
+      return await request(path, undefined, options, connectionTimeout);
+    } catch (error) {
+      if (error.code === "unauthorized" || error.code === "no_connection") throw error;
+      throw new Error(`${label}失败。${error.message}`);
+    }
+  },
+
+  renderRecords(pageData = {}) {
     const { filter, query } = this.data;
     const needle = query.trim().replace(/^#/, "").toLowerCase();
     const visible = this.allRecords.filter((record) => {
@@ -84,7 +100,7 @@ Page({
       return [record.location, record.taskLabel, record.id]
         .some((value) => value && String(value).toLowerCase().includes(needle));
     });
-    this.setData({ visibleRecords: visible, records: visible });
+    this.setData({ visibleRecords: visible, records: visible, ...pageData });
   },
 
   refresh() {
@@ -158,7 +174,7 @@ Page({
       this.setData({ error: error.message });
       if (error.code === "unauthorized") this.setData({ showSettings: true });
     } finally {
-      this.setData({ busy: false });
+      this.setData({ busy: false, connectionStage: "" });
     }
   },
 });

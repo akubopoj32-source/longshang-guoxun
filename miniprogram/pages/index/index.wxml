@@ -18,6 +18,7 @@
 
   <view wx:if="{{error}}" class="error" aria-role="alert">{{error}}</view>
   <view wx:if="{{notice}}" class="question">{{notice}}</view>
+  <view wx:if="{{connectionStage}}" class="muted">{{connectionStage}}</view>
 
   <block wx:if="{{connected}}">
     <view wx:if="{{resumeId}}" class="resume" bindtap="resumeRecord" aria-role="button">
@@ -58,5 +59,4 @@
       <view wx:if="{{item.activity}}" class="muted">{{item.activity}}</view>
     </view>
   </block>
-  <view wx:elif="{{busy}}" class="muted">正在连接巡查服务…</view>
 </view>
