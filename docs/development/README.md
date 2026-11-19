@@ -21,3 +21,4 @@
 - [2026-11-19 巡查人员管理与小程序账号登录](2026-11-19-accounts-inspector-login.md)
 - [2026-11-19 小程序草稿恢复与重复提交防护](2026-11-19-miniprogram-draft-recovery.md)
 - [2026-11-19 账号隔离与草稿恢复真机验收](2026-11-19-mobile-account-draft-acceptance.md)
+- [2026-11-19 知识检索与桌面巡查处理展示](2026-11-19-knowledge-retrieval-workflow.md)

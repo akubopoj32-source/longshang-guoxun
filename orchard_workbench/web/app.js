@@ -23,6 +23,7 @@ let queueStatus = "pending";
 let selectedField;
 let selectedTurn;
 let mode;
+let modelName = "";
 let connectionState = "connecting";
 let pendingTurn;
 let inspectorEditor;
@@ -78,7 +79,7 @@ function showConnection(status, message = "") {
 
 function showModelStatus(degraded = false) {
   const label = degraded ? "图文模型上次处理失败，可用规则保存"
-    : mode === "model" ? "图文模型已配置" : "本地规则模式";
+    : mode === "model" ? (modelName ? `图文模型 · ${modelName}` : "图文模型已配置") : "本地规则模式";
   $("mode").textContent = label;
   $("connection-model").textContent = !degraded && mode === "model"
     ? `${label}。使用模型处理时，本轮输入会发送到已配置的模型服务。`
@@ -324,7 +325,8 @@ function renderProgress({record, pending, questions}, task) {
     confirmed: "可预览或导出本版复查单。",
   };
   $("record-progress").hidden = false;
-  $("record-next").textContent = `已记录 ${statuses.filter((item) => item.complete).length}/${statuses.length} 项 · ${next[record.status]}`;
+  const followUp = ["draft", "returned"].includes(record.status) && questions[0];
+  $("record-next").textContent = `已记录 ${statuses.filter((item) => item.complete).length}/${statuses.length} 项 · ${followUp ? "追问 · " : ""}${next[record.status]}`;
   $("record-unresolved").replaceChildren(...statuses.filter((item) => !item.complete).map((item) =>
     element("li", `${item.label} · ${item.text}`, "badge badge-pending")));
 }
@@ -388,8 +390,22 @@ function renderEvidence() {
   $("evidence-turn").value = turn.id;
   const source = {model: "图文模型", rules: "本地规则"}[turn.extraction_mode];
   $("evidence-source").textContent = source ? `第 ${turn.id} 轮 · ${source}` : `第 ${turn.id} 轮`;
+  $("evidence-inputs").textContent = [turn.message && "巡查描述", turn.image && "巡查照片"].filter(Boolean).join(" + ");
+  const taskFields = tasks[record.task].fields;
+  const links = Object.entries(taskFields).filter(([key]) =>
+    record.fields[key]?.evidence?.some((item) => item.turn === turn.id && !item.superseded));
+  $("evidence-fields-row").hidden = links.length === 0;
+  $("evidence-field-links").replaceChildren(...links.map(([key, fieldLabel]) => {
+    const button = element("button", fieldLabel, "secondary compact");
+    button.type = "button";
+    button.addEventListener("click", () => {
+      selectField(key, turn.id);
+      if (selectedField === key) $("fields").querySelector(`[data-field="${key}"]`)?.focus({preventScroll: true});
+    });
+    return button;
+  }));
   $("evidence-message").textContent = turn.message || "本轮未填写文字。";
-  const label = tasks[record.task].fields[selectedField];
+  const label = taskFields[selectedField];
   const linked = field?.evidence?.filter((item) => item.turn === turn.id) || [];
   const quotes = [...new Set(linked.map((item) => item.quote
     ? item.quote + (item.superseded ? "（已被更正）" : "") : "").filter(Boolean))];
@@ -636,7 +652,9 @@ $("turn").addEventListener("submit", (event) => {
   if (!canWriteTurn() || !hasTurnInput() || pendingTurn) return;
   const rulesOnly = event.submitter === $("rules-fallback");
   run(async () => {
-    setTurnFeedback(rulesOnly ? "正在用本地规则整理本轮…" : "正在整理本轮输入…");
+    const modeLabel = rulesOnly || mode !== "model" ? "正在用本地规则整理本轮…"
+      : $("photo").files.length ? "正在用图文模型整理文字和照片…" : "正在用模型提取巡查字段…";
+    setTurnFeedback(modeLabel);
     let payload;
     let data;
     try {
@@ -766,6 +784,7 @@ $("field-knowledge").addEventListener("click", () => {
   $("knowledge-context").hidden = false;
   $("knowledge-context").textContent = `当前字段 · ${label}。问题可编辑，点击「查询资料」后发送。`;
   $("knowledge-question").value = question;
+  $("knowledge-result-mode").hidden = true;
   $("knowledge-answer").textContent = "";
   $("knowledge-sources").replaceChildren();
   $("knowledge-dialog").showModal();
@@ -780,15 +799,26 @@ $("knowledge-form").addEventListener("submit", async (event) => {
   button.disabled = true;
   input.readOnly = true;
   const answer = $("knowledge-answer");
+  const resultMode = $("knowledge-result-mode");
+  resultMode.hidden = true;
   answer.className = "";
   answer.textContent = "正在查询资料…";
   $("knowledge-sources").replaceChildren();
   try {
     const result = await request("/api/knowledge/ask", {question: input.value});
+    const count = result.retrieved_count ?? result.sources.length;
+    const labels = {
+      answered: ["模型带出处回答", result.model_name, `检索 ${count} 段`, `引用 ${result.sources.length} 段`],
+      sources_only: ["资料摘要", `检索 ${count} 段`],
+      no_match: ["未命中相关资料"],
+    };
+    resultMode.textContent = (labels[result.status] || []).filter(Boolean).join(" · ");
+    resultMode.hidden = !resultMode.textContent;
     answer.textContent = result.answer;
     for (const source of result.sources) {
       const item = element("li");
-      item.append(element("strong", source.source), element("p", source.section), element("p", source.text));
+      item.append(element("strong", source.source), element("p", source.section, "muted"), element("p", source.text));
+      if (source.matched_terms?.length) item.append(element("p", `检索词 · ${source.matched_terms.join("、")}`, "muted"));
       if (source.url) {
         const link = element("a", "打开原文");
         link.href = `/api/knowledge/source?id=${encodeURIComponent(source.id)}`;
@@ -928,6 +958,7 @@ async function connectWorkbench(checkDesktop = false) {
     }
     tasks = config.tasks;
     mode = config.mode;
+    modelName = config.model_name || "";
     $("open-inspectors").hidden = !config.account_mode || config.access !== "staff";
     if (!$("open-inspectors").hidden) $("record-search").placeholder = "点位、任务、编号或巡查员";
     showModelStatus();

@@ -82,7 +82,17 @@
             </div>
             <p id="evidence-empty" class="muted">本记录暂无原始证据。</p>
             <div id="evidence-detail" hidden>
-              <p id="evidence-source" class="evidence-source"></p>
+              <section class="turn-trace" aria-labelledby="turn-trace-title">
+                <div class="row turn-trace-heading">
+                  <h3 id="turn-trace-title">本轮处理</h3>
+                  <p id="evidence-source" class="muted"></p>
+                </div>
+                <p id="evidence-inputs" class="muted"></p>
+                <div id="evidence-fields-row" class="row" hidden>
+                  <span class="muted">当前字段依据</span>
+                  <div id="evidence-field-links" class="row" role="group" aria-label="查看关联字段"></div>
+                </div>
+              </section>
               <h3>巡查员原话</h3>
               <p id="evidence-message" class="evidence-quote"></p>
               <p id="evidence-linkage" class="muted"></p>
@@ -209,6 +219,7 @@
       <textarea id="knowledge-question" rows="2" required minlength="2" maxlength="300" placeholder="例如：诱捕监测需要记录哪些字段？"></textarea>
       <button type="submit" id="ask-knowledge">查询资料</button>
     </form>
+    <p id="knowledge-result-mode" class="knowledge-result-mode" hidden></p>
     <p id="knowledge-answer" role="status" aria-live="polite"></p>
     <ol id="knowledge-sources" aria-label="资料来源"></ol>
   </dialog>

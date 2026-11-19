@@ -1,12 +1,25 @@
 """Retrieve orchard reference passages and ask the configured model to cite them."""
 
 import json
+import os
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from .extraction import ModelUnavailable, model_enabled, request_model_json
+
+
+TOPIC_ALIASES = (
+    (("冰雹", "雹灾", "雹伤"), ("冰雹后巡查", "雹灾症状")),
+    (("晚霜", "霜冻", "果树冻伤"), ("霜冻后记录", "冻害复查")),
+    (("暴雨", "果园进水", "果园被淹", "涝害"), ("果园积水", "暴雨后")),
+    (("照片拍糊了", "图太糊", "图看不清", "照片看不清"), ("照片模糊",)),
+)
+
+
+def normalize(text):
+    return unicodedata.normalize("NFKC", text).casefold()
 
 
 @lru_cache(maxsize=1)
@@ -17,16 +30,21 @@ def knowledge_entries():
 
 
 def retrieve(question):
-    normalized = unicodedata.normalize("NFKC", question).casefold()
+    normalized = normalize(question)
+    expansions = {term for aliases, topics in TOPIC_ALIASES if any(alias in normalized for alias in aliases)
+                  for term in topics}
     ranked = []
     for entry in knowledge_entries():
-        matches = [term for term in entry["keywords"] if term in normalized]
+        matches = [term for term in entry["keywords"] if normalize(term) in normalized or term in expansions]
         # Prefer specific matches and avoid counting shorter aliases twice.
-        score = sum(len(term) for term in matches if not any(term != other and term in other for other in matches))
-        if score:
-            ranked.append((score, entry))
+        specific = [term for term in matches if not any(term != other and term in other for other in matches)]
+        if specific:
+            score = sum(len(term) for term in specific)
+            passage = {key: value for key, value in entry.items() if key != "keywords"}
+            passage["matched_terms"] = specific
+            ranked.append((score, passage))
     ranked.sort(key=lambda item: item[0], reverse=True)
-    return [{key: value for key, value in entry.items() if key != "keywords"} for _, entry in ranked[:3]]
+    return [passage for _, passage in ranked[:3]]
 
 
 def source_url(source_id):
@@ -39,10 +57,13 @@ def answer_question(question):
         raise ValueError("请输入 2 到 300 字的知识库问题。")
     question = question.strip()
     sources = retrieve(question)
+    retrieved_count = len(sources)
     if not sources:
-        return {"status": "no_match", "answer": "知识库中暂无与这个问题相关的资料。", "sources": []}
+        return {"status": "no_match", "answer": "知识库中暂无与这个问题相关的资料。", "sources": [],
+                "retrieved_count": retrieved_count}
 
-    fallback = {"status": "sources_only", "answer": "已找到相关资料，可查看下方摘要。", "sources": sources}
+    fallback = {"status": "sources_only", "answer": "已找到相关资料，可查看下方摘要。", "sources": sources,
+                "retrieved_count": retrieved_count}
     if not model_enabled():
         return fallback
 
@@ -68,4 +89,5 @@ def answer_question(question):
         return {**fallback, "answer": "现有资料不足以生成有出处的回答，可查看下方相关资料。"}
     if any(not isinstance(ref, str) or ref not in by_id for ref in citations):
         return {**fallback, "answer": "回答引用未通过核对，可直接查看下方资料。"}
-    return {"status": "answered", "answer": answer.strip(), "sources": [by_id[ref] for ref in dict.fromkeys(citations)]}
+    return {"status": "answered", "answer": answer.strip(), "sources": [by_id[ref] for ref in dict.fromkeys(citations)],
+            "retrieved_count": retrieved_count, "model_name": os.getenv("ORCHARD_MODEL", "")}

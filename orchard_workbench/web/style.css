@@ -117,8 +117,13 @@ button:disabled { opacity: .55; cursor: progress; }
 .evidence-alerts ul { margin: 0; padding-left: 16px; }
 .text-button { display: block; padding: 2px 0; border: 0; background: transparent; color: var(--green); text-decoration: underline; text-align: left; font-size: .8rem; }
 #return-note, .review-note-text, .evidence-quote { white-space: pre-wrap; overflow-wrap: anywhere; }
-.muted, .evidence-source { color: var(--muted); font-size: .84rem; }
-.evidence-source { margin-bottom: 8px; }
+.muted { color: var(--muted); font-size: .84rem; }
+.turn-trace { background: var(--soft); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.turn-trace-heading { justify-content: space-between; }
+.turn-trace .turn-trace-heading h3, .turn-trace p { margin: 0; }
+.turn-trace #evidence-inputs { margin: 3px 0; }
+.turn-trace #evidence-fields-row { margin-top: 6px; }
+#evidence-field-links button { font-size: .78rem; padding: 3px 6px; }
 #turn-picker { gap: 5px; }
 #turn-picker label { margin: 0; }
 #turn-picker select { font-size: .8rem; }
@@ -176,6 +181,7 @@ dialog::backdrop { background: #17241e9c; }
 #connection-feedback:empty { display: none; }
 #knowledge-dialog::backdrop { background: #17241e88; }
 #knowledge-dialog form + form { margin-top: 0; }
+.knowledge-result-mode { margin: 14px 0 0; color: var(--green); background: var(--soft); border-radius: 6px; padding: 7px 10px; font-size: .86rem; }
 #knowledge-answer { margin: 16px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 #knowledge-sources { margin: 14px 0 0; padding-left: 22px; }
 #knowledge-sources:empty, #knowledge-answer:empty { display: none; }

@@ -187,9 +187,11 @@ class Workbench(BaseHTTPRequestHandler):
             filename, mime = ASSETS[path]
             self.send_content(200, (ROOT / "web" / filename).read_bytes(), mime)
         elif path == "/api/config":
+            has_model = model_enabled()
             self.send_json(200, {
                 "tasks": TASKS,
-                "mode": "model" if model_enabled() else "demo",
+                "mode": "model" if has_model else "demo",
+                "model_name": os.getenv("ORCHARD_MODEL", "") if has_model else "",
                 "voice": transcription_enabled(),
                 "access": "inspector" if self.inspector else "staff",
                 "account_mode": getattr(self.server, "account_mode", False),
