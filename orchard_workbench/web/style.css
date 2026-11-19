@@ -163,6 +163,12 @@ dialog::backdrop { background: #17241e9c; }
 #photo-viewport.actual-size #photo-full { width: auto; height: auto; }
 .workbench-dialog { width: min(700px, calc(100% - 32px)); max-height: calc(100% - 32px); padding: 22px; color: inherit; border: 1px solid var(--border); border-radius: 14px; }
 #connection-dialog { max-width: 450px; }
+#inspector-form { display: grid; gap: 10px; margin: 14px 0; }
+#inspector-form input { width: 100%; }
+#inspectors-status:empty { display: none; }
+#inspector-list { list-style: none; padding: 0; margin: 12px 0 0; }
+#inspector-list li { display: grid; gap: 7px; padding: 10px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+#inspector-list .row { flex-wrap: wrap; }
 .connection-details { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 18px; font-size: .9rem; }
 .connection-details dt { color: var(--muted); }
 .connection-details dd { margin: 0; overflow-wrap: anywhere; }

@@ -17,6 +17,7 @@ const connectionTimeout = 10000;
 Page({
   data: {
     origin: "", token: "", showSettings: false, busy: false, connectionStage: "", error: "", notice: "",
+    authMode: "account", username: "", password: "", currentUser: null,
     connected: false, tasks: [], taskIndex: 0, filter: "", query: "",
     filters, records: [], visibleRecords: [], totalCount: 0, mode: "", resumeId: "", resumeShort: "",
   },
@@ -28,17 +29,20 @@ Page({
     this.loadedOnce = false;
     const resumeId = lastRecord();
     this.setData({
-      ...saved,
-      showSettings: !saved.origin,
+      origin: saved.origin,
+      token: saved.auth === "account" ? "" : saved.token,
+      username: saved.username || "",
+      authMode: saved.auth || (saved.token ? "legacy" : "account"),
+      showSettings: !saved.token,
       resumeId,
       resumeShort: resumeId.slice(0, 8),
     });
-    if (saved.origin) this.refresh();
+    if (saved.origin && saved.token) this.refresh();
   },
 
   onShow() {
     // Returning from the capture page: refresh so status changes show up.
-    if (connection().origin && this.loadedOnce) this.refresh();
+    if (connection().token && this.loadedOnce) this.refresh();
     this.loadedOnce = true;
   },
 
@@ -49,6 +53,11 @@ Page({
   toggleSettings() { this.setData({ showSettings: !this.data.showSettings }); },
   editOrigin(event) { this.setData({ origin: event.detail.value.trim() }); },
   editToken(event) { this.setData({ token: event.detail.value.trim() }); },
+  editUsername(event) { this.setData({ username: event.detail.value.trim() }); },
+  editPassword(event) { this.setData({ password: event.detail.value }); },
+  chooseAuthMode(event) {
+    this.setData({ authMode: event.currentTarget.dataset.mode, password: "", error: "" });
+  },
   chooseTask(event) { this.setData({ taskIndex: Number(event.detail.value) }); },
   editQuery(event) { this.setData({ query: event.detail.value }); this.renderRecords(); },
 
@@ -78,7 +87,10 @@ Page({
       statusLabel: statusNames[record.status] || record.status,
       activity: formatTime(record.activity_at),
     }));
-    this.renderRecords({ tasks, mode: config.mode, connected: true, totalCount: this.allRecords.length });
+    const previousId = lastRecord();
+    const resumeId = this.allRecords.some((record) => record.id === previousId) ? previousId : "";
+    this.renderRecords({ tasks, mode: config.mode, connected: true, totalCount: this.allRecords.length,
+      currentUser: config.user || null, resumeId, resumeShort: resumeId.slice(0, 8) });
   },
 
   async loadConnectionData(path, label, options) {
@@ -86,7 +98,7 @@ Page({
     try {
       return await request(path, undefined, options, connectionTimeout);
     } catch (error) {
-      if (error.code === "unauthorized" || error.code === "no_connection") throw error;
+      if (["unauthorized", "no_connection", "session_required", "session_expired"].includes(error.code)) throw error;
       throw new Error(`${label}失败。${error.message}`);
     }
   },
@@ -104,39 +116,74 @@ Page({
   },
 
   refresh() {
+    if (!connection().token) return Promise.resolve();
     return this.run(() => this.loadRecords());
   },
 
   async connect() {
     const origin = this.data.origin.trim().replace(/\/$/, "");
-    const token = this.data.token.trim();
-    if (!/^https?:\/\/[a-z0-9.-]+(?::\d{1,5})?$/i.test(origin) || !token) {
-      this.setData({ error: "请输入完整的服务地址和联调令牌。" });
+    const { authMode, username, password, token } = this.data;
+    if (!/^https?:\/\/[a-z0-9.-]+(?::\d{1,5})?$/i.test(origin)) {
+      this.setData({ error: "请输入完整的服务地址。" });
+      return;
+    }
+    if (authMode === "account" ? !username || !password : !token) {
+      this.setData({ error: authMode === "account" ? "请输入巡查账号和密码。" : "请输入联调令牌。" });
       return;
     }
     await this.run(async () => {
-      await this.loadRecords({ origin, token });
-      saveConnection(origin, token);
-      const resumeId = lastRecord();
-      this.setData({
-        origin, token, showSettings: false, taskIndex: 0,
-        resumeId, resumeShort: resumeId.slice(0, 8),
-      });
-      wx.showToast({ title: "已连接巡查服务", icon: "success" });
+      if (authMode === "account") {
+        this.setData({ connectionStage: "正在登录…", password: "" });
+        const result = await request("/api/session/login", { username, password }, { origin }, connectionTimeout);
+        if (!/^[A-Za-z0-9_-]{43}$/.test(result?.token || "") || !result?.user?.username) {
+          throw new Error("巡查服务返回的登录信息无效。");
+        }
+        saveConnection(origin, result.token, "account", result.user.username);
+        this.setData({ username: result.user.username, token: "" });
+        await this.loadRecords();
+      } else {
+        await this.loadRecords({ origin, token });
+        saveConnection(origin, token);
+      }
+      this.setData({ origin, showSettings: false, taskIndex: 0 });
+      wx.showToast({ title: authMode === "account" ? "登录成功" : "已连接巡查服务", icon: "success" });
+    });
+  },
+
+  resetSession() {
+    this.allRecords = [];
+    this.config = null;
+    this.setData({ connected: false, showSettings: true, currentUser: null, token: "", password: "",
+      records: [], visibleRecords: [], totalCount: 0, resumeId: "", resumeShort: "" });
+  },
+
+  logout() {
+    return this.run(async () => {
+      const { origin, username } = connection();
+      let notice = "已退出登录。";
+      try {
+        await request("/api/session/logout", {}, connection(), connectionTimeout);
+      } catch (error) {
+        if (error.code !== "session_expired" && error.code !== "session_required") {
+          notice = "已退出本机。服务暂不可用，原会话将按有效期失效。";
+        }
+      }
+      saveConnection(origin, "", "account", username);
+      this.resetSession();
+      this.setData({ notice });
     });
   },
 
   forgetService() {
     wx.showModal({
       title: "清除连接设置",
-      content: "将清除本机保存的服务地址和联调令牌。",
+      content: "将清除本机保存的服务地址和连接信息。",
       success: ({ confirm }) => {
         if (!confirm) return;
         clearConnection();
-        this.allRecords = [];
+        this.resetSession();
         this.setData({
-          origin: "", token: "", connected: false, showSettings: true, mode: "",
-          records: [], visibleRecords: [], totalCount: 0, error: "", notice: "",
+          origin: "", username: "", mode: "", error: "", notice: "",
         });
       },
     });
@@ -173,6 +220,11 @@ Page({
     } catch (error) {
       this.setData({ error: error.message });
       if (error.code === "unauthorized") this.setData({ showSettings: true });
+      if (error.code === "session_required" || error.code === "session_expired") {
+        saveConnection(this.data.origin, "", "account", this.data.username);
+        this.resetSession();
+        this.setData({ authMode: "account" });
+      }
     } finally {
       this.setData({ busy: false, connectionStage: "" });
     }

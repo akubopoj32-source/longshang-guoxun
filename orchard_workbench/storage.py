@@ -5,8 +5,10 @@ import sqlite3
 from contextlib import closing, contextmanager
 from uuid import uuid4
 
+from .accounts import find_session, initialize_accounts, session_expired
 
-SCHEMA_VERSION = 1
+
+SCHEMA_VERSION = 2
 SUMMARY_COLUMNS = "id, task, location, status, activity_at"
 SUMMARY_SELECT = """
     SELECT id, json_extract(data, '$.task'), json_extract(data, '$.fields.location.value'),
@@ -41,42 +43,48 @@ class RecordStore:
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version == SCHEMA_VERSION:
                 return None
-            if version != 0:
+            if version not in (0, 1):
                 raise sqlite3.OperationalError(f"当前程序不支持数据库版本 {version}。")
 
             backup_path = None
             if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'records'").fetchone():
-                backup_path = self.path.with_name(f"{self.path.stem}.before-v1-{uuid4().hex[:8]}.sqlite3")
+                backup_path = self.path.with_name(f"{self.path.stem}.before-v{version + 1}-{uuid4().hex[:8]}.sqlite3")
                 self.backup(backup_path)
 
-            db.execute("CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
-            db.execute("""
-                CREATE TABLE record_summaries (
-                    sequence INTEGER PRIMARY KEY,
-                    id TEXT NOT NULL UNIQUE REFERENCES records(id) ON DELETE CASCADE,
-                    task TEXT NOT NULL,
-                    location TEXT,
-                    status TEXT NOT NULL,
-                    activity_at TEXT,
-                    activity_order REAL GENERATED ALWAYS AS (julianday(activity_at)) VIRTUAL,
-                    write_version INTEGER NOT NULL DEFAULT 0
-                )
-                """)
-            db.execute(f"INSERT INTO record_summaries ({SUMMARY_COLUMNS}) {SUMMARY_SELECT} ORDER BY rowid")
-            db.execute("CREATE INDEX record_summaries_activity ON record_summaries(activity_order DESC, sequence DESC)")
-            for event in ("INSERT", "UPDATE"):
-                db.execute(f"""
-                    CREATE TRIGGER records_summary_{event.lower()} AFTER {event} ON records BEGIN
-                        INSERT INTO record_summaries ({SUMMARY_COLUMNS})
-                        {SUMMARY_SELECT} WHERE id = NEW.id
-                        ON CONFLICT(id) DO UPDATE SET
-                            task = excluded.task,
-                            location = excluded.location, status = excluded.status, activity_at = excluded.activity_at,
-                            write_version = record_summaries.write_version + 1;
-                    END
-                    """)
+            if version == 0:
+                self.initialize_summaries(db)
+            initialize_accounts(db)
             db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             return backup_path
+
+    @staticmethod
+    def initialize_summaries(db):
+        db.execute("CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+        db.execute("""
+            CREATE TABLE record_summaries (
+                sequence INTEGER PRIMARY KEY,
+                id TEXT NOT NULL UNIQUE REFERENCES records(id) ON DELETE CASCADE,
+                task TEXT NOT NULL,
+                location TEXT,
+                status TEXT NOT NULL,
+                activity_at TEXT,
+                activity_order REAL GENERATED ALWAYS AS (julianday(activity_at)) VIRTUAL,
+                write_version INTEGER NOT NULL DEFAULT 0
+            )
+            """)
+        db.execute(f"INSERT INTO record_summaries ({SUMMARY_COLUMNS}) {SUMMARY_SELECT} ORDER BY rowid")
+        db.execute("CREATE INDEX record_summaries_activity ON record_summaries(activity_order DESC, sequence DESC)")
+        for event in ("INSERT", "UPDATE"):
+            db.execute(f"""
+                CREATE TRIGGER records_summary_{event.lower()} AFTER {event} ON records BEGIN
+                    INSERT INTO record_summaries ({SUMMARY_COLUMNS})
+                    {SUMMARY_SELECT} WHERE id = NEW.id
+                    ON CONFLICT(id) DO UPDATE SET
+                        task = excluded.task,
+                        location = excluded.location, status = excluded.status, activity_at = excluded.activity_at,
+                        write_version = record_summaries.write_version + 1;
+                END
+                """)
 
     def backup(self, destination):
         destination = destination.resolve()
@@ -97,12 +105,14 @@ class RecordStore:
         with self.connection() as db:
             db.execute("SELECT id FROM record_summaries LIMIT 1").fetchone()
 
-    def load(self, record_id):
+    def load(self, record_id, *, owner_id=None):
+        scope = " AND records.owner_id = ?" if owner_id is not None else ""
+        args = (record_id, owner_id) if owner_id is not None else (record_id,)
         with self.connection() as db:
             row = db.execute("""
                 SELECT records.data, record_summaries.write_version
                 FROM records JOIN record_summaries USING (id) WHERE records.id = ?
-                """, (record_id,)).fetchone()
+                """ + scope, args).fetchone()
         if row is None:
             return None
         try:
@@ -110,24 +120,35 @@ class RecordStore:
         except json.JSONDecodeError as error:
             raise sqlite3.DatabaseError("巡查记录不是有效的 JSON。") from error
 
-    def list_records(self):
+    def list_records(self, *, owner_id=None):
+        scope = "WHERE records.owner_id = ?" if owner_id is not None else ""
+        args = (owner_id,) if owner_id is not None else ()
         with self.connection() as db:
             db.row_factory = sqlite3.Row
-            rows = db.execute("""
-                SELECT id, task, location, status, activity_at FROM record_summaries
+            rows = db.execute(f"""
+                SELECT records.id, task, location, status, activity_at,
+                       inspectors.display_name AS inspector_name, inspectors.username AS inspector_username
+                FROM records JOIN record_summaries USING (id)
+                LEFT JOIN inspectors ON records.owner_id = inspectors.id
+                {scope}
                 ORDER BY activity_order DESC, sequence DESC
-                """).fetchall()
+                """, args).fetchall()
         return [dict(row) for row in rows]
 
-    def save(self, record_id, record, expected_write_version=None):
+    def save(self, record_id, record, expected_write_version=None, *, owner_id=None, session_hash=None):
         data = json.dumps(record, ensure_ascii=False)
         with self.connection() as db:
+            if session_hash is not None:
+                db.execute("BEGIN IMMEDIATE")
+                session = find_session(db, session_hash)
+                if session is None or session[0] != owner_id:
+                    raise session_expired()
             if expected_write_version is None:
-                db.execute("INSERT INTO records (id, data) VALUES (?, ?)", (record_id, data))
+                db.execute("INSERT INTO records (id, data, owner_id) VALUES (?, ?, ?)", (record_id, data, owner_id))
                 return True
             result = db.execute("""
-                UPDATE records SET data = ? WHERE id = ? AND EXISTS (
+                UPDATE records SET data = ? WHERE id = ? AND (? IS NULL OR owner_id = ?) AND EXISTS (
                     SELECT 1 FROM record_summaries WHERE id = ? AND write_version = ?
                 )
-                """, (data, record_id, record_id, expected_write_version))
+                """, (data, record_id, owner_id, owner_id, record_id, expected_write_version))
             return result.rowcount == 1

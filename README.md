@@ -55,7 +55,22 @@ npm run build:win
 
 5. 在小程序里新建诱捕监测记录，输入模拟描述并选一张示意图。处理输入、补充追问并提交复核。桌面端点击「刷新记录」，用手机详情页的记录编号定位同一条记录。桌面端填写意见并退回后，在小程序详情页点击「刷新」。
 
-联调使用模拟材料，令牌只填在本机和测试小程序中。联调结束后可在服务窗口按 `Ctrl+C` 停止监听。正式发布需要配置 HTTPS 请求域名、用户身份验证和访问权限。[微信小程序网络文档](https://developers.weixin.qq.com/miniprogram/dev/framework/ability/network.html)
+使用上述令牌联调时，在新版小程序的连接设置中选择「联调令牌」。联调使用模拟材料。联调结束后可在服务窗口按 `Ctrl+C` 停止监听。正式发布需要配置 HTTPS 请求域名和访问权限。[微信小程序网络文档](https://developers.weixin.qq.com/miniprogram/dev/framework/ability/network.html)
+
+### 启用巡查员账号
+
+在项目根目录的 PowerShell 中启动一套独立的账号联调库。共享服务的工作台令牌用于电脑端本机连接，手机填桌面端创建的巡查账号和密码。
+
+```powershell
+$env:ORCHARD_LOCAL_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(32))"
+python app.py --host 0.0.0.0 --port 8890 --accounts --db 'local/人员联调/records.sqlite3'
+```
+
+1. 按上文的桌面共享模式启动客户端。将 `ORCHARD_SHARED_URL` 改为 `http://127.0.0.1:8890`，电脑端使用相同的 `ORCHARD_LOCAL_TOKEN`。
+2. 打开「人员管理」，输入账号、姓名、至少 10 位密码后保存。可按巡查员姓名或账号搜索巡查记录。停用和重置密码会撤销该巡查员当前的所有登录会话。
+3. 在微信开发者工具重新编译小程序并「预览」扫码。选择「巡查账号」，服务地址使用电脑在同一 Wi-Fi 下的 IPv4 地址及端口 `8890`，例如 `http://192.168.1.10:8890`。登录后可创建记录、查看原图、提交复核和读取自己的退回意见。
+
+已有账号的数据库以 `--accounts` 启动。旧记录仍可由工作台查看，新建的小程序记录自动绑定当前巡查账号。局域网 HTTP 流程适用于可信 Wi-Fi 下的模拟联调。对外部署时为移动端接口配置 HTTPS。
 
 ## Docker 部署
 
@@ -75,7 +90,7 @@ docker compose up --build -d
 
 ## 巡查数据库备份
 
-新版后端首次打开旧库时，会在同一目录生成 `*.before-v1-*.sqlite3` 备份，再迁移列表摘要。电脑端和小程序继续使用原有记录接口。共享服务运行时可用 SQLite 的在线备份生成一致的副本。
+新版后端首次打开旧库时，会在同一目录生成 `*.before-v1-*.sqlite3` 或 `*.before-v2-*.sqlite3` 备份，再迁移列表摘要或巡查账号结构。共享服务运行时可用 SQLite 的在线备份生成一致的副本。
 
 ```powershell
 python app.py --db 'local/wechat-simulator/records.sqlite3' --backup 'local/backups/records-2026-11-13.sqlite3'

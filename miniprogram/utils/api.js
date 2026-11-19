@@ -10,25 +10,37 @@ function connection() {
   return saved && typeof saved === "object" ? saved : { origin: "", token: "" };
 }
 
-function saveConnection(origin, token) {
-  wx.setStorageSync(storageKey, { origin, token });
+function saveConnection(origin, token, auth = "legacy", username = "") {
+  wx.setStorageSync(storageKey, { origin, token, auth, username });
 }
 
 function clearConnection() {
   wx.removeStorageSync(storageKey);
 }
 
+function recordStorageKey() {
+  const { auth, origin, username } = connection();
+  return auth === "account" ? `${lastRecordKey}:${origin}:${username}` : lastRecordKey;
+}
+
 function lastRecord() {
-  return wx.getStorageSync(lastRecordKey) || "";
+  return wx.getStorageSync(recordStorageKey()) || "";
 }
 
 function saveLastRecord(id) {
-  wx.setStorageSync(lastRecordKey, id);
+  wx.setStorageSync(recordStorageKey(), id);
+}
+
+function authHeader(options) {
+  if (!options.token) return {};
+  return options.auth === "account"
+    ? { Authorization: `Bearer ${options.token}` }
+    : { "X-Orchard-Token": options.token };
 }
 
 function request(path, data, options = connection(), connectionTimeout) {
-  if (!options.origin || !options.token) {
-    return Promise.reject(Object.assign(new Error("请先配置服务地址和联调令牌。"), { code: "no_connection" }));
+  if (!options.origin || (!options.token && path !== "/api/session/login")) {
+    return Promise.reject(Object.assign(new Error("请先登录巡查服务。"), { code: "no_connection" }));
   }
   return new Promise((resolve, reject) => {
     const timeoutError = () => Object.assign(new Error("等待巡查服务响应超时，请稍后重试。"), { code: "network" });
@@ -37,7 +49,7 @@ function request(path, data, options = connection(), connectionTimeout) {
       method: data ? "POST" : "GET",
       data,
       timeout: connectionTimeout ?? (path === "/api/transcribe" ? 65000 : 30000),
-      header: { "content-type": "application/json", "X-Orchard-Token": options.token },
+      header: { "content-type": "application/json", ...authHeader(options) },
       success({ statusCode, data: raw }) {
         clearTimeout(deadline);
         const ok = statusCode >= 200 && statusCode < 300;
@@ -59,7 +71,7 @@ function request(path, data, options = connection(), connectionTimeout) {
         }
         const message = (result && result.error) || "巡查服务返回错误。";
         const code = (result && result.code)
-          || ({ 400: "bad_request", 403: "unauthorized", 404: "not_found", 409: "stale" }[statusCode])
+          || ({ 400: "bad_request", 401: "session_expired", 403: "unauthorized", 404: "not_found", 409: "stale" }[statusCode])
           || "server_error";
         reject(Object.assign(new Error(message), { status: statusCode, code }));
       },
@@ -90,14 +102,15 @@ function recordPath(id, operation = "") {
 }
 
 function downloadPhoto(id, turn) {
-  const { origin, token } = connection();
-  if (!origin || !token) return Promise.reject(new Error("请先配置服务地址和联调令牌。"));
+  const options = connection();
+  if (!options.origin || !options.token) return Promise.reject(new Error("请先登录巡查服务。"));
   return new Promise((resolve, reject) => {
     wx.downloadFile({
-      url: `${origin}/api/records/${id}/turns/${turn}/photo`,
-      header: { "X-Orchard-Token": token },
+      url: `${options.origin}/api/records/${id}/turns/${turn}/photo`,
+      header: authHeader(options),
       success({statusCode, tempFilePath}) {
         if (statusCode === 200 && tempFilePath) resolve(tempFilePath);
+        else if (statusCode === 401) reject(Object.assign(new Error("登录已失效，请重新登录。"), { code: "session_expired" }));
         else reject(new Error("无法读取该轮原图，请刷新记录后重试。"));
       },
       fail() { reject(new Error("无法下载原图，请检查网络后重试。")); },

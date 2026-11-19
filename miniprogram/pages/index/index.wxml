@@ -1,16 +1,30 @@
 <view class="screen">
   <view class="heading">
     <view class="title">巡查记录</view>
-    <button class="secondary compact" bindtap="toggleSettings">连接设置</button>
+    <button wx:if="{{currentUser}}" class="secondary compact" disabled="{{busy}}" bindtap="logout">退出登录</button>
+    <button wx:else class="secondary compact" disabled="{{busy}}" bindtap="toggleSettings">连接设置</button>
   </view>
 
-  <view wx:if="{{showSettings}}" class="card">
+  <view wx:if="{{currentUser}}" class="muted">{{currentUser.display_name}} · {{currentUser.username}}</view>
+  <view wx:if="{{showSettings && !currentUser}}" class="card">
+    <view class="button-row">
+      <button class="{{authMode === 'account' ? 'primary' : 'secondary'}} compact" disabled="{{busy}}" data-mode="account" bindtap="chooseAuthMode">巡查账号</button>
+      <button class="{{authMode === 'legacy' ? 'primary' : 'secondary'}} compact" disabled="{{busy}}" data-mode="legacy" bindtap="chooseAuthMode">联调令牌</button>
+    </view>
     <label class="label" for="origin">服务地址</label>
     <input id="origin" value="{{origin}}" bindinput="editOrigin" disabled="{{busy}}" placeholder="http://192.168.1.10:8765" />
-    <label class="label" for="token">联调令牌</label>
-    <input id="token" value="{{token}}" bindinput="editToken" disabled="{{busy}}" password="{{true}}" />
+    <block wx:if="{{authMode === 'account'}}">
+      <label class="label" for="username">巡查账号</label>
+      <input id="username" value="{{username}}" bindinput="editUsername" maxlength="32" disabled="{{busy}}" />
+      <label class="label" for="password">密码</label>
+      <input id="password" value="{{password}}" bindinput="editPassword" maxlength="128" disabled="{{busy}}" password="{{true}}" />
+    </block>
+    <block wx:else>
+      <label class="label" for="token">联调令牌</label>
+      <input id="token" value="{{token}}" bindinput="editToken" disabled="{{busy}}" password="{{true}}" />
+    </block>
     <view class="button-row spaced">
-      <button class="primary" disabled="{{busy}}" loading="{{busy}}" bindtap="connect">连接服务</button>
+      <button class="primary" disabled="{{busy}}" loading="{{busy}}" bindtap="connect">{{authMode === 'account' ? '登录' : '连接服务'}}</button>
       <button wx:if="{{origin}}" class="secondary" disabled="{{busy}}" bindtap="forgetService">清除</button>
     </view>
     <view class="muted spaced">手机与电脑需连接同一可信 Wi-Fi。电脑运行 ipconfig 查看 Wi-Fi 网卡的 IPv4 地址。</view>

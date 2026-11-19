@@ -1,9 +1,10 @@
 <view class="screen">
   <view class="heading">
     <view class="title">{{title || '巡查详情'}}</view>
-    <button class="secondary compact" wx:if="{{id}}" disabled="{{busy}}" bindtap="refresh">刷新</button>
+    <button class="secondary compact" wx:if="{{id && !sessionExpired}}" disabled="{{busy}}" bindtap="refresh">刷新</button>
   </view>
   <view wx:if="{{error}}" class="error" aria-role="alert">{{error}}</view>
+  <button wx:if="{{sessionExpired}}" class="primary spaced" bindtap="returnToLogin">返回登录</button>
   <view wx:if="{{notice}}" class="question">{{notice}}</view>
   <view wx:if="{{busy && busyLabel}}" class="muted">{{busyLabel}}</view>
 
@@ -87,7 +88,7 @@
     </view>
 
     <!-- 逐项复核：仅待复核状态可操作 -->
-    <view wx:if="{{status === 'pending'}}" class="card">
+    <view wx:if="{{status === 'pending' && canReview}}" class="card">
       <view class="section-title">逐项复核</view>
       <view class="muted">点选字段后可确认现值、人工更正或标记为待核实。</view>
       <view class="field-choices">

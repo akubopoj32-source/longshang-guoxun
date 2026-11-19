@@ -25,6 +25,8 @@ let selectedTurn;
 let mode;
 let connectionState = "connecting";
 let pendingTurn;
+let inspectorEditor;
+let inspectorsBusy = false;
 const activityFormat = new Intl.DateTimeFormat("zh-CN", {dateStyle: "short", timeStyle: "short"});
 const dateFormat = new Intl.DateTimeFormat("sv-SE", {year: "numeric", month: "2-digit", day: "2-digit"});
 const syncFormat = new Intl.DateTimeFormat("zh-CN", {hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false});
@@ -97,7 +99,7 @@ function renderList() {
     if (queueStatus && record.status !== queueStatus) return false;
     if (task && record.task !== task) return false;
     if (date && (!record.activity_at || dateFormat.format(new Date(record.activity_at)) !== date)) return false;
-    return !query || [record.location, tasks[record.task].label, record.id]
+    return !query || [record.location, tasks[record.task].label, record.id, record.inspector_name, record.inspector_username]
       .some((value) => value?.toLowerCase().includes(query));
   });
   $("list-empty").hidden = visible.length > 0;
@@ -114,7 +116,7 @@ function renderList() {
     if (state?.id === record.id) button.setAttribute("aria-current", "true");
     button.append(
       element("strong", record.location || "点位待补充"),
-      element("span", tasks[record.task].label, "record-task"),
+      element("span", [tasks[record.task].label, record.inspector_name].filter(Boolean).join(" · "), "record-task"),
       statusBadge(record.status),
       element("span", `#${record.id.slice(0, 8)} · ${record.activity_at ? activityFormat.format(new Date(record.activity_at)) : "无活动时间"}`, "record-time"),
     );
@@ -832,6 +834,84 @@ $("save-pdf").addEventListener("click", () => run(async () => {
   }
 }));
 
+function editInspector(action, person) {
+  const form = $("inspector-form");
+  form.reset();
+  inspectorEditor = action ? {action, person} : undefined;
+  form.hidden = !action;
+  if (!action) return;
+  const title = {create: "新增巡查员", rename: "修改姓名", reset_password: "重置密码"}[action];
+  $("inspector-editor-title").textContent = person ? `${title} · ${person.username}` : title;
+  const fields = {username: action === "create", name: action !== "reset_password", password: action !== "rename"};
+  for (const [key, show] of Object.entries(fields)) {
+    $(`inspector-${key}-row`).hidden = !show;
+    $(`inspector-${key}`).disabled = !show;
+    $(`inspector-${key}`).required = show;
+  }
+  if (action === "rename") $("inspector-name").value = person.display_name;
+  form.querySelector("input:not([disabled])").focus();
+}
+
+function renderInspectors(inspectors) {
+  $("inspector-list").replaceChildren();
+  if (!inspectors.length) $("inspector-list").append(element("li", "暂无巡查人员。"));
+  for (const person of inspectors) {
+    const row = element("li");
+    const actions = element("div", undefined, "row");
+    const available = [
+      ["修改姓名", () => editInspector("rename", person)],
+      ["重置密码", () => editInspector("reset_password", person)],
+      [person.active ? "停用" : "启用", () => manageInspectors(`/api/inspectors/${person.id}`,
+        {action: "active", active: !person.active}, person.active ? "已停用，原登录会话已失效。" : "已启用。")],
+    ];
+    for (const [label, handler] of available) {
+      const button = element("button", label, "secondary compact");
+      button.type = "button";
+      button.addEventListener("click", handler);
+      actions.append(button);
+    }
+    row.append(element("strong", `${person.display_name} · ${person.username}`),
+      element("span", `${person.active ? "已启用" : "已停用"} · ${person.record_count} 条巡查记录`, "muted"), actions);
+    $("inspector-list").append(row);
+  }
+}
+
+async function manageInspectors(path, body, notice = "") {
+  if (inspectorsBusy) return;
+  inspectorsBusy = true;
+  $("inspectors-status").textContent = body ? "正在保存…" : "正在读取巡查人员…";
+  try {
+    const data = await request(path, body);
+    renderInspectors(data.inspectors);
+    if (body) editInspector();
+    $("inspectors-status").textContent = notice;
+    if (body) refreshRecords({background: true});
+  } catch (error) {
+    $("inspectors-status").textContent = error.message;
+  } finally {
+    inspectorsBusy = false;
+  }
+}
+
+$("open-inspectors").addEventListener("click", () => {
+  $("inspectors-dialog").showModal();
+  manageInspectors("/api/inspectors");
+});
+$("new-inspector").addEventListener("click", () => editInspector("create"));
+$("cancel-inspector").addEventListener("click", () => editInspector());
+$("inspectors-dialog").addEventListener("close", () => editInspector());
+$("inspector-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!inspectorEditor) return;
+  const {action, person} = inspectorEditor;
+  const path = person ? `/api/inspectors/${person.id}` : "/api/inspectors";
+  const values = {action};
+  if (action === "create") values.username = $("inspector-username").value;
+  if (action !== "reset_password") values.display_name = $("inspector-name").value;
+  if (action !== "rename") values.password = $("inspector-password").value;
+  manageInspectors(path, values, action === "reset_password" ? "密码已重置，原登录会话已失效。" : "已保存。");
+});
+
 async function connectWorkbench(checkDesktop = false) {
   showConnection("connecting", checkDesktop ? "正在检查巡查服务…" : "");
   try {
@@ -848,6 +928,8 @@ async function connectWorkbench(checkDesktop = false) {
     }
     tasks = config.tasks;
     mode = config.mode;
+    $("open-inspectors").hidden = !config.account_mode || config.access !== "staff";
+    if (!$("open-inspectors").hidden) $("record-search").placeholder = "点位、任务、编号或巡查员";
     showModelStatus();
     await refreshRecords();
     if (!state && !hasUnsavedInput()) {

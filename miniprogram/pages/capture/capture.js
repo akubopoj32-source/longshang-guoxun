@@ -15,7 +15,7 @@ Page({
     canRecord: false, voiceReady: false, voiceNote: "",
     reviewField: "", reviewAction: "confirm", reviewValue: "", reviewNoteInput: "",
     reviewFieldLabel: "", reviewFieldValue: "", reviewFieldState: "", reviewEvidence: [],
-    canConfirm: false, needsValue: false, fieldOptions: [],
+    canConfirm: false, needsValue: false, fieldOptions: [], canReview: false, sessionExpired: false,
   },
 
   onLoad({ id }) {
@@ -56,6 +56,8 @@ Page({
     const canRecord = voice.canRecord();
     this.setData({
       mode: config.mode,
+      canReview: config.access !== "inspector",
+      sessionExpired: false,
       voiceReady: Boolean(config.voice),
       canRecord,
       voiceNote: !canRecord ? ""
@@ -68,6 +70,8 @@ Page({
     if (!this.data.id) return Promise.resolve();
     return this.run(() => this.load());
   },
+
+  returnToLogin() { wx.reLaunch({ url: "/pages/index/index" }); },
 
   apply(result) {
     const record = result.record;
@@ -326,6 +330,9 @@ Page({
       }
       if (error.code === "not_found" || error.code === "unauthorized") {
         this.setData({ editable: false, canSubmit: false });
+      }
+      if (error.code === "session_expired" || error.code === "session_required") {
+        this.setData({ sessionExpired: true, status: "", editable: false, canSubmit: false });
       }
     } finally {
       this.setData({ busy: false, busyLabel: "" });
