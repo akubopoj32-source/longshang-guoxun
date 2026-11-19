@@ -12,7 +12,7 @@ from threading import Barrier, Thread
 from unittest.mock import patch
 
 from orchard_workbench.accounts import AccountError, InspectorAccounts
-from orchard_workbench.orchard import apply_turn, new_record
+from orchard_workbench.orchard import apply_turn, new_record, review
 from orchard_workbench.server import Workbench
 from orchard_workbench.storage import RecordStore
 
@@ -152,6 +152,70 @@ class AccountTests(unittest.TestCase):
         with self.assertRaises(AccountError) as rejected:
             handler.authorize("/api/inspectors")
         self.assertEqual(rejected.exception.status, 401)
+
+    def test_database_overview_is_local_and_paginates_filtered_summaries(self):
+        inspector = self.create_user("field.user")["inspectors"][0]
+        token = self.login("field.user")["token"]
+        self.assertTrue(self.request("/api/config", admin=True)["database_admin"])
+        self.assertFalse(self.request("/api/config", token=token)["database_admin"])
+        self.request("/api/database", expected=403)
+        self.request("/api/database", token=token, expected=403)
+        self.request("/api/database/check", {}, token=token, expected=403)
+        self.request("/api/database/backup", {}, token=token, expected=403)
+        self.server.account_mode = False
+        self.server.local_token = b""
+        self.request("/api/database", expected=403)
+        self.server.local_token = self.admin_token.encode()
+        self.server.account_mode = True
+
+        for sequence in range(21):
+            self.store.save(f"{sequence:032x}", new_record("orchard"))
+        record_id = "a" * 32
+        record = new_record("trap")
+        apply_turn(record, "三号监测点今天上午看到两只疑似虫体", PHOTO, rules_only=True)
+        review(record, "submit")
+        self.store.save(record_id, record, owner_id=inspector["id"])
+        page = self.request("/api/database?page=2", admin=True)
+        self.assertEqual((page["page"], page["pages"], page["total"], len(page["records"])), (2, 2, 22, 2))
+        self.assertEqual(page["counts"]["by_status"]["pending"], 1)
+        self.assertEqual(page["counts"]["inspectors"], 1)
+
+        filtered = self.request("/api/database?q=FIELD.USER&status=pending", admin=True)
+        found, = filtered["records"]
+        self.assertEqual(found["id"], record_id)
+        self.assertEqual(found["inspector_name"], inspector["display_name"])
+        self.assertNotIn("data", found)
+        self.assertNotIn("image", found)
+        self.assertNotIn("password_hash", json.dumps(filtered))
+        self.assertEqual(self.request("/api/database?status=deleted", admin=True, expected=400)["error"],
+                         "请检查筛选条件。搜索词最多 80 个字符。")
+        self.request("/api/database?page=0", admin=True, expected=400)
+
+        handler = object.__new__(Workbench)
+        handler.server = self.server
+        handler.client_address = ("192.0.2.40", 1234)
+        handler.headers = {"X-Orchard-Token": self.admin_token}
+        with self.assertRaises(AccountError) as rejected:
+            handler.authorize("/api/database")
+        self.assertEqual(rejected.exception.status, 403)
+
+    def test_database_check_and_online_backup(self):
+        record = new_record("orchard")
+        self.store.save("one", record)
+        self.assertEqual(self.request("/api/database/check", {}, admin=True)["status"], "ok")
+        backup = self.request("/api/database/backup", {}, admin=True)["backup"]
+        overview = self.request("/api/database", admin=True)
+        saved = Path(overview["backup_path"]) / backup["name"]
+        self.assertTrue(saved.is_file())
+        self.assertGreater(backup["bytes"], 0)
+        self.assertEqual(overview["backups"], [backup])
+        self.assertEqual(RecordStore(saved).load("one"), self.store.load("one"))
+        self.assertEqual(list(saved.parent.glob("*.tmp")), [])
+        with self.store.connection() as db:
+            db.execute("DELETE FROM record_summaries WHERE id = 'one'")
+        issue = self.request("/api/database/check", {}, admin=True)
+        self.assertEqual(issue["status"], "issues")
+        self.assertIn("索引", issue["message"])
 
     def test_duplicate_turn_requests_return_the_saved_record(self):
         self.create_user("field.a")

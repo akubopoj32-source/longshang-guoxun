@@ -7,6 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23285a3f'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
+  <script src="/database.js" defer></script>
 </head>
 <body>
   <header class="app-bar">
@@ -15,11 +16,12 @@
       <div class="app-status" role="status"><span id="service-status">正在连接巡查服务…</span><span id="mode" class="mode"></span></div>
       <button id="open-connection" type="button" class="secondary">连接状态</button>
       <button id="open-inspectors" type="button" class="secondary" hidden>人员管理</button>
+      <button id="open-database" type="button" class="secondary" aria-controls="database-page" aria-pressed="false" hidden>数据库管理</button>
       <button id="open-knowledge" type="button" class="secondary">知识库</button>
       <button id="toggle-new-record" type="button" aria-expanded="false" aria-controls="new-record">新建巡查</button>
     </div>
   </header>
-  <main>
+  <main id="inspection-page">
     <p id="notice" role="status" aria-live="polite"></p>
     <aside class="card record-sidebar" aria-labelledby="list-title">
       <div class="row list-heading">
@@ -70,7 +72,7 @@
         <section class="card record-header" aria-labelledby="record-title">
           <div class="row record-header-content">
             <div>
-              <div class="row record-heading"><h2 id="record-title"></h2><span id="record-badge" class="badge"></span></div>
+              <div class="row record-heading"><h2 id="record-title" tabindex="-1"></h2><span id="record-badge" class="badge"></span></div>
               <p id="record-status"></p>
             </div>
             <div id="actions" class="row actions"></div>
@@ -183,6 +185,68 @@
           </section>
         </div>
       </div>
+    </div>
+  </main>
+  <main id="database-page" class="database-page" hidden>
+    <section class="card database-header" aria-labelledby="database-title">
+      <div class="row database-heading">
+        <div><h2 id="database-title" tabindex="-1">数据库管理</h2><p id="database-engine" class="muted"></p></div>
+        <button id="back-to-workbench" type="button" class="secondary">返回巡查工作台</button>
+      </div>
+      <dl class="database-metrics" aria-label="数据库概况">
+        <div><dt>巡查记录</dt><dd id="database-count">—</dd></div>
+        <div><dt>待复核</dt><dd id="database-pending">—</dd></div>
+        <div><dt>已复核</dt><dd id="database-confirmed">—</dd></div>
+        <div><dt>巡查账号</dt><dd id="database-inspectors">—</dd></div>
+      </dl>
+    </section>
+    <p id="database-feedback" class="database-feedback" role="status"></p>
+    <div class="database-grid">
+      <section class="card database-records" aria-labelledby="database-records-title">
+        <div class="row list-heading">
+          <h3 id="database-records-title">巡查记录</h3>
+          <button id="refresh-database" type="button" class="secondary compact">刷新数据库</button>
+        </div>
+        <form id="database-filters" class="database-filters">
+          <div><label for="database-query">搜索记录</label><input id="database-query" type="search" maxlength="80" placeholder="编号、点位或巡查员"></div>
+          <div><label for="database-status">复核状态</label><select id="database-status">
+            <option value="">全部状态</option><option value="draft">草稿</option><option value="pending">待复核</option>
+            <option value="returned">已退回</option><option value="confirmed">已复核</option>
+          </select></div>
+          <button type="submit">查询</button>
+        </form>
+        <div class="database-table-scroll" tabindex="0" role="region" aria-label="巡查记录表格">
+          <table class="database-table">
+            <thead><tr><th scope="col">巡查记录</th><th scope="col">巡查员</th><th scope="col">状态</th><th scope="col">最近活动</th><th scope="col">操作</th></tr></thead>
+            <tbody id="database-rows"></tbody>
+          </table>
+        </div>
+        <p id="database-empty" class="muted" hidden>没有符合当前条件的巡查记录。</p>
+        <div class="row database-pagination">
+          <p id="database-pagination-label" class="muted"></p>
+          <div class="row">
+            <button id="database-previous" class="secondary compact" type="button" disabled>上一页</button>
+            <button id="database-next" class="secondary compact" type="button" disabled>下一页</button>
+          </div>
+        </div>
+      </section>
+      <section class="card database-maintenance" aria-labelledby="database-maintenance-title">
+        <h3 id="database-maintenance-title">备份与校验</h3>
+        <dl class="database-paths">
+          <dt>当前数据库</dt><dd id="database-file">—</dd>
+          <dt>备份目录</dt><dd id="database-backup-folder">—</dd>
+        </dl>
+        <div class="row">
+          <button id="database-backup" type="button">创建备份</button>
+          <button id="database-check" type="button" class="secondary">校验数据库</button>
+        </div>
+        <p id="database-check-result" class="muted" role="status"></p>
+        <div class="database-backup-history">
+          <h4>最近备份</h4>
+          <p id="database-backup-empty" class="muted">暂无界面创建的备份。</p>
+          <ul id="database-backups" aria-label="最近备份"></ul>
+        </div>
+      </section>
     </div>
   </main>
   <dialog id="connection-dialog" class="workbench-dialog" aria-labelledby="connection-title">

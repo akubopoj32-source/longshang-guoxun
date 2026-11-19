@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .accounts import AccountError, InspectorAccounts
+from .database_admin import DatabaseAdmin
 from .extraction import ModelUnavailable, model_enabled
 from .knowledge import answer_question, source_url
 from .orchard import QUESTIONS, TASKS, apply_turn, evidence_alerts, new_record, pending_items, review, review_field
@@ -28,6 +29,7 @@ ROOT = Path(__file__).resolve().parent
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/database.js": ("database.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
 MAX_REQUEST = 6 * 1024 * 1024
@@ -49,13 +51,22 @@ def turn_submission(data):
 
 
 class Workbench(BaseHTTPRequestHandler):
+    def local_workbench(self):
+        token = self.server.local_token
+        supplied = self.headers.get("X-Orchard-Token", "").encode()
+        return self.client_address[0] == "127.0.0.1" and bool(token) and secrets.compare_digest(supplied, token)
+
     def authorize(self, path):
         self.inspector = None
         self.session_hash = None
+        if path == "/api/database" or path.startswith("/api/database/"):
+            if not self.local_workbench():
+                raise AccountError("数据库管理需要本机工作台权限。", 403, "forbidden")
+            return
         token = self.server.local_token
         supplied = self.headers.get("X-Orchard-Token", "").encode()
         if getattr(self.server, "account_mode", False):
-            if self.client_address[0] == "127.0.0.1" and token and secrets.compare_digest(supplied, token):
+            if self.local_workbench():
                 return
             scheme, _, credential = self.headers.get("Authorization", "").partition(" ")
             if scheme.lower() != "bearer":
@@ -195,8 +206,20 @@ class Workbench(BaseHTTPRequestHandler):
                 "voice": transcription_enabled(),
                 "access": "inspector" if self.inspector else "staff",
                 "account_mode": getattr(self.server, "account_mode", False),
+                "database_admin": self.local_workbench(),
                 "user": {"username": self.inspector[1], "display_name": self.inspector[2]} if self.inspector else None,
             })
+        elif path == "/api/database":
+            try:
+                data = DatabaseAdmin(self.server.store).overview(parse_qs(target.query, keep_blank_values=True))
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+                return
+            except OSError as error:
+                self.log_error("Unable to list database backups: %s", error)
+                self.send_json(503, {"error": "暂时无法读取数据库备份目录。"})
+                return
+            self.send_json(200, data)
         elif path == "/api/inspectors" and getattr(self.server, "account_mode", False):
             self.send_json(200, {"inspectors": self.server.accounts.list()})
         elif path == "/api/health":
@@ -253,6 +276,12 @@ class Workbench(BaseHTTPRequestHandler):
                 self.send_json(200, self.server.accounts.login(self.client_address[0], data.get("username"), data.get("password")))
                 return
             self.authorize(path)
+            if path in ("/api/database/check", "/api/database/backup"):
+                self.read_json(MAX_ACCOUNT_REQUEST)
+                database = DatabaseAdmin(self.server.store)
+                result = database.check() if path.endswith("/check") else {"backup": database.create_backup()}
+                self.send_json(200, result)
+                return
             if path == "/api/session/logout" and account_mode and self.inspector:
                 self.server.accounts.logout(self.session_hash)
                 self.send_json(200, {"ok": True})
@@ -332,7 +361,13 @@ class Workbench(BaseHTTPRequestHandler):
             self.database_error(error)
         except ValueError as error:
             self.send_json(400, {"error": str(error)})
-        except (OSError, KeyError, IndexError, TypeError, AttributeError):
+        except OSError as error:
+            if path == "/api/database/backup":
+                self.log_error("Unable to write database backup: %s", error)
+                self.send_json(503, {"error": "无法创建备份，请检查备份目录权限和剩余空间。"})
+                return
+            self.send_json(502, {"error": "处理失败，当前记录未修改。请核对模型配置或稍后重试。"})
+        except (KeyError, IndexError, TypeError, AttributeError):
             self.send_json(502, {"error": "处理失败，当前记录未修改。请核对模型配置或稍后重试。"})
 
     def change_inspector(self, path, data):

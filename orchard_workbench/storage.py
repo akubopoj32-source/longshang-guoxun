@@ -20,6 +20,14 @@ SUMMARY_SELECT = """
            END)
     FROM records
 """
+RECORD_LIST_COLUMNS = """
+    records.id, task, location, status, activity_at,
+    inspectors.display_name AS inspector_name, inspectors.username AS inspector_username
+"""
+RECORD_LIST_FROM = """
+    FROM records JOIN record_summaries USING (id)
+    LEFT JOIN inspectors ON records.owner_id = inspectors.id
+"""
 
 
 class RecordStore:
@@ -126,10 +134,7 @@ class RecordStore:
         with self.connection() as db:
             db.row_factory = sqlite3.Row
             rows = db.execute(f"""
-                SELECT records.id, task, location, status, activity_at,
-                       inspectors.display_name AS inspector_name, inspectors.username AS inspector_username
-                FROM records JOIN record_summaries USING (id)
-                LEFT JOIN inspectors ON records.owner_id = inspectors.id
+                SELECT {RECORD_LIST_COLUMNS} {RECORD_LIST_FROM}
                 {scope}
                 ORDER BY activity_order DESC, sequence DESC
                 """, args).fetchall()

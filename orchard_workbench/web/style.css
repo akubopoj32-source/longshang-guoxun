@@ -30,6 +30,7 @@ body { margin: 0; }
 .app-tools button { border-color: #547b6b; }
 .app-tools #toggle-new-record { background: var(--accent); border-color: var(--accent); color: var(--ink); font-weight: 700; }
 .app-tools .secondary { background: transparent; color: #fff; }
+.app-tools #open-database[aria-pressed="true"] { background: #315747; border-color: #8ab7a0; }
 .app-status { display: grid; justify-items: start; gap: 4px; margin-right: 6px; font-size: .72rem; color: #d3e7dc; }
 .app-status .mode { background: #25483b; border-radius: 5px; padding: 2px 7px; color: #d8eee3; overflow-wrap: anywhere; }
 .app-status .mode[data-mode="model"] { background: #365846; color: #effac8; }
@@ -50,6 +51,46 @@ p { line-height: 1.55; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .workspace { min-width: 0; }
 .workspace > form { margin-bottom: 12px; }
+.database-page { display: block; }
+.database-header { padding: 20px; background: linear-gradient(115deg, #12372b, #205043); color: #f3fff6; }
+.database-heading { justify-content: space-between; }
+.database-heading h2 { font-size: 1.55rem; margin: 0 0 4px; }
+.database-heading p { color: #cde6d9; margin: 0; }
+.database-heading .secondary { background: transparent; color: #f4fff7; border-color: #81a798; }
+.database-header :focus-visible { outline-color: #fff; }
+.database-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 16px 0 0; }
+.database-metrics div { border: 1px solid #476d5e; border-radius: 8px; background: #f2fff310; padding: 9px 11px; }
+.database-metrics dt { color: #cfebdd; font-size: .78rem; }
+.database-metrics dd { margin: 4px 0 0; color: var(--accent); font-size: 1.3rem; font-weight: 750; font-variant-numeric: tabular-nums; }
+.database-feedback { margin: 10px 0 0; font-size: .86rem; }
+.database-feedback:empty, #database-check-result:empty, #database-pagination-label:empty { display: none; }
+.database-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(320px, 1fr); align-items: start; gap: 14px; margin-top: 14px; }
+.database-records h3, .database-maintenance h3 { margin: 0 0 8px; font-size: 1.02rem; }
+.database-records .list-heading h3 { margin: 0; }
+.database-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(115px, .4fr) auto; align-items: end; gap: 8px; margin-bottom: 12px; }
+.database-filters input, .database-filters select { width: 100%; min-width: 0; font-size: .84rem; }
+.database-table-scroll { max-width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: 7px; }
+.database-table { border-collapse: collapse; width: 100%; min-width: 530px; font-size: .84rem; text-align: left; }
+.database-table th, .database-table td { padding: 8px; vertical-align: middle; overflow-wrap: anywhere; }
+.database-table th { background: #e9f2ed; color: #345246; }
+.database-table tr + tr td, .database-table tbody tr:first-child td { border-top: 1px solid var(--border); }
+.database-table td span.muted { display: block; font-size: .73rem; }
+.database-table td:last-child, .database-table th:last-child { white-space: nowrap; }
+.database-pagination { justify-content: space-between; margin-top: 12px; }
+.database-pagination p, #database-empty { margin: 0; }
+#database-empty { margin-top: 10px; }
+.database-paths { padding: 10px 11px; border-radius: 7px; background: var(--soft); margin: 7px 0 11px; font-size: .82rem; }
+.database-paths dt { font-weight: 650; color: #365447; }
+.database-paths dd { margin: 4px 0 8px; color: var(--muted); overflow-wrap: anywhere; }
+.database-paths dd:last-child { margin-bottom: 0; }
+#database-check-result { margin: 8px 0 0; }
+.database-backup-history { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 12px; }
+.database-backup-history h4 { margin: 0 0 8px; font-size: .87rem; }
+.database-backup-history p { margin: 0; }
+#database-backups { margin: 0; padding: 0; list-style: none; }
+#database-backups li { padding: 7px 0; font-size: .8rem; }
+#database-backups li + li { border-top: 1px solid var(--border); }
+#database-backups span { display: block; margin-top: 3px; }
 .workspace-empty {
   display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(210px, .82fr); gap: clamp(18px, 4vw, 48px);
   align-items: center; padding: clamp(22px, 4vw, 48px); min-height: 270px;
@@ -270,6 +311,9 @@ dialog::backdrop { background: #17241e9c; }
   .field-value { grid-row: 2; grid-column: 1 / -1; }
   .workflow-steps { gap: 6px; }
   .welcome-workflow div { grid-template-columns: 2.5em 1fr; }
+  .database-grid { grid-template-columns: 1fr; }
+  .app-bar { position: static; }
+  .record-sidebar { top: 12px; }
 }
 @media (max-width: 780px) {
   main { grid-template-columns: 1fr; }
@@ -280,6 +324,9 @@ dialog::backdrop { background: #17241e9c; }
 @media (max-width: 640px) {
   .workspace-empty, .knowledge-results:has(.knowledge-citations:not([hidden])) { grid-template-columns: 1fr; }
   .workflow-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .database-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .database-filters { grid-template-columns: minmax(0, 1fr) minmax(110px, .6fr); }
+  .database-filters button { justify-self: start; }
 }
 @media (max-width: 540px) {
   .review-grid { grid-template-columns: 1fr; }

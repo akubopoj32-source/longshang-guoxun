@@ -675,7 +675,10 @@ function toggleNewRecord(open) {
 }
 
 $("toggle-new-record").addEventListener("click", () => {
-  if (tasks) toggleNewRecord($("new-record").hidden);
+  if (!tasks) return;
+  const leavingDatabase = !$("database-page").hidden;
+  if (leavingDatabase) showDatabasePage(false);
+  toggleNewRecord(leavingDatabase || $("new-record").hidden);
 });
 $("empty-new-record").addEventListener("click", () => {
   if (tasks) toggleNewRecord(true);
@@ -1040,6 +1043,7 @@ async function connectWorkbench(checkDesktop = false) {
     mode = config.mode;
     modelName = config.model_name || "";
     $("open-inspectors").hidden = !config.account_mode || config.access !== "staff";
+    $("open-database").hidden = !config.database_admin;
     if (!$("open-inspectors").hidden) $("record-search").placeholder = "点位、任务、编号或巡查员";
     showModelStatus();
     await refreshRecords();
