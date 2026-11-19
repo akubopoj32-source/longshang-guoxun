@@ -10,6 +10,8 @@ function showDatabasePage(open) {
   $("inspection-page").hidden = open;
   $("database-page").hidden = !open;
   $("open-database").setAttribute("aria-pressed", String(open));
+  if (open) $("open-inspection").removeAttribute("aria-current");
+  else $("open-inspection").setAttribute("aria-current", "page");
 }
 
 function updateDatabaseControls() {
@@ -120,8 +122,9 @@ $("open-database").addEventListener("click", () => {
 });
 $("back-to-workbench").addEventListener("click", () => {
   showDatabasePage(false);
-  $("open-database").focus();
+  $("open-inspection").focus();
 });
+$("open-inspection").addEventListener("click", () => showDatabasePage(false));
 $("refresh-database").addEventListener("click", () =>
   runDatabaseAction(() => loadDatabaseOverview(databaseView.page), "正在刷新数据库…"));
 $("database-filters").addEventListener("submit", (event) => {

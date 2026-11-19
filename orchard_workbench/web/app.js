@@ -3,6 +3,15 @@ const statusNames = {draft: "草稿", pending: "待复核", confirmed: "已复�
 const fieldStates = {recorded: "已记录", unknown: "待核实", conflict: "待核对"};
 const reviewNames = {submit: "提交复核", confirm: "确认记录", return: "退回补充"};
 const fieldReviewNames = {confirm: "确认现值", correct: "人工更正", mark_unknown: "标记为待核实"};
+const followUpActions = {
+  location: "补充点位",
+  time: "补充观察时间",
+  position: "补充地块内位置",
+  observation: "补充现场观察",
+  quantity: "补充观察数量",
+  photo: "补充照片",
+  photo_detail: "补拍照片",
+};
 const fieldQuestions = {
   trap: "诱捕监测需要记录哪些字段？",
   orchard: "果园异常巡查需要记录哪些字段？",
@@ -257,8 +266,8 @@ function update(data) {
   renderEvidence();
   $("evidence-alerts").hidden = alerts.length === 0;
   $("alert-list").replaceChildren(...alerts.map((alert) => {
-    const item = element("li", `口述 ${alert.reported} 只，照片估计可见 ${alert.visible} 只。`);
-    const button = element("button", `核对第 ${alert.turn} 轮证据`, "text-button");
+    const item = element("li");
+    const button = element("button", `查看第 ${alert.turn} 轮图文差异`, "text-button");
     button.type = "button";
     button.addEventListener("click", () => selectField("quantity", alert.turn));
     item.append(button);
@@ -283,8 +292,9 @@ function update(data) {
   $("return-note").textContent = returnNote ? `退回意见：${returnNote}` : "";
   $("review-note-panel").hidden = !["pending", "confirmed"].includes(record.status);
   $("actions").replaceChildren();
-  if (record.turns.length && ["draft", "returned"].includes(record.status)) addAction("提交复核", () => changeReview("submit"));
-  if (record.status === "pending") addAction("确认当前版本", () => changeReview("confirm"));
+  const reviewClass = $("next-action").hidden ? "" : "secondary";
+  if (record.turns.length && ["draft", "returned"].includes(record.status)) addAction("提交复核", () => changeReview("submit"), reviewClass);
+  if (record.status === "pending") addAction("确认当前版本", () => changeReview("confirm"), reviewClass);
   if (["pending", "confirmed"].includes(record.status)) addAction("退回补充", () => changeReview("return"), "secondary");
   if (record.status === "confirmed") {
     addAction("预览打印版", openPrintPreview);
@@ -362,24 +372,35 @@ function renderProgress({record, pending, questions, evidence_alerts}, task) {
   renderWorkflow(record, pending, questions, statuses.filter((item) => item.complete).length, statuses.length);
   $("record-progress").hidden = false;
   const followUp = ["draft", "returned"].includes(record.status) && questions[0];
-  $("record-progress").dataset.attention = String(Boolean(followUp || pending.length && record.status === "pending"));
-  $("record-next").textContent = `${followUp ? "追问 · " : ""}${next[record.status]}`;
   $("record-unresolved").replaceChildren(...statuses.filter((item) => record.turns.length && !item.complete).map((item) =>
     element("li", `${item.label} · ${item.text}`, "badge badge-pending")));
   const action = $("next-action");
+  const questionKey = record.questions?.[0];
   const supplement = Boolean(followUp || record.status === "returned");
+  const inspectDifference = !supplement && record.status !== "confirmed" && hasCountConflict;
   const inspectPending = record.status === "pending" && pending.length > 0;
-  action.hidden = !supplement && !inspectPending;
-  action.dataset.action = supplement ? "supplement" : "review";
-  action.textContent = supplement ? "补充信息" : "查看待核实";
+  $("record-progress").dataset.attention = String(Boolean(supplement || inspectDifference || inspectPending));
+  $("record-next").textContent = inspectDifference ? "同一轮的口述数量与整板照片估计有差异。"
+    : `${followUp ? "追问 · " : ""}${next[record.status]}`;
+  action.hidden = !supplement && !inspectDifference && !inspectPending;
+  action.dataset.target = supplement
+    ? (["photo", "photo_detail"].includes(questionKey) ? "photo" : "message")
+    : inspectDifference ? "quantity" : "pending";
+  action.textContent = supplement ? followUpActions[questionKey] || "补充巡查信息"
+    : inspectDifference ? "核对数量差异" : "查看待核实事项";
 }
 
 $("next-action").addEventListener("click", (event) => {
-  if (event.currentTarget.dataset.action === "supplement") {
-    $("message").focus();
+  const target = event.currentTarget.dataset.target;
+  if (target === "quantity") {
+    selectField("quantity");
+    if (selectedField === "quantity") $("fields").querySelector('[data-field="quantity"]')?.focus();
+  } else if (target === "pending") {
+    const panel = $("pending-panel");
+    panel.open = true;
+    panel.querySelector("summary").focus();
   } else {
-    $("pending-panel").open = true;
-    $("pending-panel").querySelector("summary").focus();
+    $(target).focus();
   }
 });
 
@@ -418,6 +439,34 @@ function selectField(key, turn) {
   const fieldEvidence = state.record.fields[key]?.evidence?.findLast((item) => !item.superseded);
   selectedTurn = turn ?? alert?.turn ?? fieldEvidence?.turn ?? selectedTurn;
   renderEvidence();
+}
+
+function renderImageJudgment(turn) {
+  const judgment = $("evidence-judgment");
+  judgment.hidden = !turn.image;
+  if (!turn.image) return;
+  const alert = state.evidence_alerts?.find((item) => item.turn === turn.id);
+  const count = alert?.visible ?? turn.visible_count;
+  const hasCount = Number.isInteger(count);
+  const limited = turn.photo_quality === "limited";
+  const attention = Boolean(alert || limited);
+  const status = $("evidence-judgment-status");
+  status.className = `badge ${attention ? "badge-pending" : "badge-draft"}`;
+  status.textContent = alert ? "有数量差异 · 待人工核对" : limited ? "覆盖或清晰度有限 · 待人工核对"
+    : hasCount ? "整板可计数" : turn.visual ? "图像线索供核对" : "原图已留存";
+  judgment.dataset.attention = String(attention);
+  $("evidence-comparison").hidden = !hasCount;
+  $("evidence-reported-row").hidden = !alert;
+  $("evidence-reported-count").textContent = alert ? `${alert.reported} 只` : "";
+  $("evidence-visible-count").textContent = hasCount ? `${count} 只` : "";
+  const details = $("evidence-visual");
+  const identity = `${state.id}:${turn.id}`;
+  if (details.dataset.turn !== identity) details.open = false;
+  details.dataset.turn = identity;
+  const visual = turn.visual || (limited ? "可补拍一张能反映现场范围的清晰照片。" : "");
+  details.hidden = !visual;
+  $("evidence-visual-preview").textContent = visual;
+  $("evidence-visual-text").textContent = visual;
 }
 
 function renderEvidence() {
@@ -467,8 +516,8 @@ function renderEvidence() {
     ? `${label}${linkage}${quotes.length ? ` · ${quotes.join(" / ")}` : " · 本轮原图"}`
     : `本轮未关联到「${label}」字段。`;
   $("evidence-photo").hidden = !turn.image;
-  $("evidence-no-photo").hidden = Boolean(turn.image);
-  $("evidence-visual").hidden = !turn.image;
+  $("evidence-original").dataset.photo = String(Boolean(turn.image));
+  renderImageJudgment(turn);
   if (!turn.image) {
     $("evidence-image").removeAttribute("src");
     return;
@@ -476,10 +525,6 @@ function renderEvidence() {
   const photo = $("evidence-image");
   photo.src = turn.image;
   photo.alt = `第 ${turn.id} 轮巡查原图`;
-  const quality = turn.photo_quality === "limited" ? "照片细节或覆盖有限，需人工核对。"
-    : turn.visual ? "" : "已留存原图，当前无视觉提取结果。";
-  $("evidence-visual-text").textContent = [turn.visual, quality].filter(Boolean).join(" ");
-  $("evidence-count").textContent = turn.visible_count == null ? "" : `模型估计可见 ${turn.visible_count} 只，待人工核对。`;
 }
 
 function fieldReviewText(entry, task) {
@@ -832,6 +877,23 @@ $("field-review-form").addEventListener("submit", (event) => {
   });
 });
 $("close-preview").addEventListener("click", () => $("print-preview").close());
+const managementMenu = $("management-menu");
+managementMenu.addEventListener("click", (event) => {
+  if (event.target.closest(".management-actions button")) managementMenu.open = false;
+});
+document.addEventListener("click", (event) => {
+  if (managementMenu.open && !managementMenu.contains(event.target)) managementMenu.open = false;
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && managementMenu.open) {
+    managementMenu.open = false;
+    $("management-toggle").focus();
+  }
+});
+for (const id of ["connection-dialog", "inspectors-dialog"]) {
+  $(id).addEventListener("close", () => $("management-toggle").focus());
+}
+
 function clearKnowledgeResult() {
   $("knowledge-results").hidden = true;
   $("knowledge-citations").hidden = true;
@@ -900,15 +962,20 @@ $("knowledge-form").addEventListener("submit", async (event) => {
     $("knowledge-citations").hidden = result.sources.length === 0;
     for (const source of result.sources) {
       const item = element("li");
-      item.append(element("strong", source.source), element("p", source.section, "muted"), element("p", source.text));
-      if (source.matched_terms?.length) item.append(element("p", `检索词 · ${source.matched_terms.join("、")}`, "muted"));
+      item.append(element("strong", source.source), element("p", source.section, "muted"));
+      const actions = element("div", undefined, "citation-actions");
+      const details = element("details", undefined, "citation-abstract");
+      details.append(element("summary", "资料摘要"), element("p", source.text));
+      if (source.matched_terms?.length) details.append(element("p", `检索词 · ${source.matched_terms.join("、")}`, "muted"));
+      actions.append(details);
       if (source.url) {
         const link = element("a", "打开原文");
         link.href = `/api/knowledge/source?id=${encodeURIComponent(source.id)}`;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
-        item.append(link);
+        actions.append(link);
       }
+      item.append(actions);
       $("knowledge-sources").append(item);
     }
   } catch (error) {

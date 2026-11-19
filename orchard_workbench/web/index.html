@@ -14,10 +14,16 @@
     <div class="brand"><span class="brand-mark" aria-hidden="true">陇</span><div class="brand-title"><h1>陇上果巡</h1><span class="app-label">智能巡查工作台</span></div></div>
     <div class="row app-tools">
       <div class="app-status" role="status"><span id="service-status">正在连接巡查服务…</span><span id="mode" class="mode"></span></div>
-      <button id="open-connection" type="button" class="secondary">连接状态</button>
-      <button id="open-inspectors" type="button" class="secondary" hidden>人员管理</button>
-      <button id="open-database" type="button" class="secondary" aria-controls="database-page" aria-pressed="false" hidden>数据库管理</button>
+      <button id="open-inspection" type="button" class="secondary" aria-current="page">巡查工作台</button>
       <button id="open-knowledge" type="button" class="secondary">知识库</button>
+      <details id="management-menu" class="management-menu">
+        <summary id="management-toggle">管理</summary>
+        <div class="management-actions">
+          <button id="open-inspectors" type="button" class="secondary" hidden>人员管理</button>
+          <button id="open-database" type="button" class="secondary" aria-controls="database-page" aria-pressed="false" hidden>数据库管理</button>
+          <button id="open-connection" type="button" class="secondary">连接状态</button>
+        </div>
+      </details>
       <button id="toggle-new-record" type="button" aria-expanded="false" aria-controls="new-record">新建巡查</button>
     </div>
   </header>
@@ -95,7 +101,7 @@
               <p id="record-next"></p>
               <ul id="record-unresolved" aria-label="待补充或待核实的字段"></ul>
             </div>
-            <button type="button" id="next-action" class="secondary compact" hidden></button>
+            <button type="button" id="next-action" class="compact" hidden></button>
           </div>
           <details id="review-note-panel" hidden>
             <summary>复核意见（选填）</summary>
@@ -111,6 +117,30 @@
             </div>
             <p id="evidence-empty" class="muted">本记录暂无原始证据。</p>
             <div id="evidence-detail" hidden>
+              <section id="evidence-judgment" class="evidence-judgment" aria-labelledby="evidence-judgment-title" hidden>
+                <div class="row evidence-judgment-heading">
+                  <h3 id="evidence-judgment-title">图像核验</h3>
+                  <span id="evidence-judgment-status" class="badge"></span>
+                </div>
+                <dl id="evidence-comparison" class="evidence-comparison" hidden>
+                  <div id="evidence-reported-row"><dt>本轮口述</dt><dd id="evidence-reported-count"></dd></div>
+                  <div><dt>整板照片估计</dt><dd id="evidence-visible-count"></dd></div>
+                </dl>
+                <details id="evidence-visual" class="visual-note" hidden>
+                  <summary><strong>图像线索</strong><span id="evidence-visual-preview"></span></summary>
+                  <p id="evidence-visual-text"></p>
+                </details>
+              </section>
+              <div id="evidence-original" class="evidence-original">
+                <div class="evidence-description">
+                  <h3>巡查员原话</h3>
+                  <p id="evidence-message" class="evidence-quote"></p>
+                  <p id="evidence-linkage" class="muted"></p>
+                </div>
+                <div id="evidence-photo" class="photo-frame" hidden>
+                  <button id="open-photo" type="button" class="photo-button" aria-label="放大查看原图"><img id="evidence-image" alt="巡查原图"><span>放大原图</span></button>
+                </div>
+              </div>
               <section class="turn-trace" aria-labelledby="turn-trace-title">
                 <div class="row turn-trace-heading">
                   <h3 id="turn-trace-title">本轮处理</h3>
@@ -122,18 +152,6 @@
                   <div id="evidence-field-links" class="row" role="group" aria-label="查看关联字段"></div>
                 </div>
               </section>
-              <h3>巡查员原话</h3>
-              <p id="evidence-message" class="evidence-quote"></p>
-              <p id="evidence-linkage" class="muted"></p>
-              <div id="evidence-photo" class="photo-frame" hidden>
-                <button id="open-photo" type="button" class="photo-button" aria-label="放大查看原图"><img id="evidence-image" alt="巡查原图"><span>放大原图</span></button>
-              </div>
-              <p id="evidence-no-photo" class="muted" hidden>本轮未上传照片。</p>
-              <div id="evidence-visual" class="visual-note" hidden>
-                <h3>图像线索</h3>
-                <p id="evidence-visual-text"></p>
-                <p id="evidence-count"></p>
-              </div>
             </div>
             <form id="turn" hidden>
               <h3>补充巡查</h3>

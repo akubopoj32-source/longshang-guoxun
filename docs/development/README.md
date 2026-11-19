@@ -24,3 +24,4 @@
 - [2026-11-19 知识检索与桌面巡查处理展示](2026-11-19-knowledge-retrieval-workflow.md)
 - [2026-11-19 桌面智能体工作台设计](2026-11-19-desktop-agent-workbench-design.md)
 - [2026-11-19 桌面数据库管理页](2026-11-19-desktop-database-management.md)
+- [2026-11-19 桌面巡查首屏与引用优化](2026-11-19-desktop-first-screen-polish.md)
