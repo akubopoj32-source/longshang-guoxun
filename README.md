@@ -159,7 +159,7 @@ python -m evaluation.run --mode rules --input multimodal --output 'local/评测�
 
 ## 开发协作
 
-电脑端和小程序端分别开发。每次改动随代码提交一份开发记录，便于合并时核对接口、依赖和验证结果。 [开发记录与模板](docs/development/README.md)
+电脑端、小程序端和共享后端由项目负责人统一在 `main` 上维护。每次改动随代码提交一份开发记录，说明接口、依赖和验证结果。[开发记录与模板](docs/development/README.md)
 
 ## 目录说明
 
