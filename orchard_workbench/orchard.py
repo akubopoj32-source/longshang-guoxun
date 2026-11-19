@@ -3,8 +3,9 @@
 import base64
 import re
 from datetime import datetime
+from time import monotonic
 
-from .extraction import Extraction, extract_with_model, model_enabled
+from .extraction import Extraction, extract_with_model, model_enabled, verify_trap_photo
 
 
 TASKS = {
@@ -31,8 +32,13 @@ UNKNOWN = re.compile(r"不知道|说不准|不清楚|无法确认|记不清|没�
 CORRECTION = re.compile(r"说错了|更正|改成|实际上|应该是|而是|其实是")
 HEDGED = re.compile(r"可能|大概|估计|也许|不确定")
 COUNT_UNCERTAIN = re.compile(r"约|左右|上下|至少|至多|不到|不足|超过|将近|以上|以下|不是|并非|如果|假设|预计|"
+                             r"[0-9零一二两三四五六七八九十]\s*(?:到|至|[-–—~～])\s*[0-9零一二两三四五六七八九十]|"
                              r"(?:没(?:有)?|未)(?:能)?(?:看到|看见|发现|观察到)")
 EXACT_TRAP_QUANTITY = re.compile(r"(?:[0-9]{1,3}|[零〇一二两三四五六七八九]|[一二两三四五六七八九]?十[一二三四五六七八九]?)\s*只")
+TRAP_QUANTITY_PHRASE = re.compile(rf"({EXACT_TRAP_QUANTITY.pattern})(?:\s*(?:疑似\s*)?(?:虫体|虫子))?")
+CLAUSE_BREAK = re.compile(r"[，。！？；,!?;\n]")
+PHOTO_VERIFICATION_WINDOW = 25  # Leave time for the mini program's 30 s request limit.
+PHOTO_VERIFICATION_TIMEOUT = 8
 POINT = re.compile(r"[零一二两三四五六七八九十百〇0-9]+\s*号\s*(?:诱捕监测点|诱捕点|监测点|点)")
 PLOT = re.compile(r"[\u4e00-\u9fff]{0,6}?[零一二两三四五六七八九十百〇0-9]+\s*号\s*(?:地块|地)")
 TIME = re.compile(r"(?:今天|昨天|前天|当天|\d{1,2}月\d{1,2}日)(?:早上|上午|中午|下午|傍晚|晚上|凌晨)?(?:\s*\d{1,2}(?:点|时)(?:半|\d{1,2}分)?)?|(?:早上|上午|中午|下午|傍晚|晚上|凌晨)(?:\s*\d{1,2}(?:点|时)(?:半|\d{1,2}分)?)?|\d{1,2}[:：]\d{2}")
@@ -55,7 +61,7 @@ def new_record(task):
 def rule_candidates(record, message):
     candidates = []
     correction_pending = False
-    for clause in re.split(r"[，。！？；,!?;\n]", message):
+    for clause in CLAUSE_BREAK.split(message):
         clause = clause.strip()
         if not clause:
             continue
@@ -119,6 +125,21 @@ def validate_image(data):
     return data
 
 
+def exact_spoken_trap_quantity(value, quote, message):
+    match = TRAP_QUANTITY_PHRASE.fullmatch(value)
+    if not match or value not in quote:
+        return None
+    count = match[1]
+    matching_clauses = [clause for clause in CLAUSE_BREAK.split(message) if value in clause]
+    if not matching_clauses or UNKNOWN.search(quote) or HEDGED.search(quote) or COUNT_UNCERTAIN.search(quote):
+        return None
+    for clause in matching_clauses:
+        if (UNKNOWN.search(clause) or HEDGED.search(clause) or COUNT_UNCERTAIN.search(clause)
+                or QUANTITY.findall(clause) != [count]):
+            return None
+    return count
+
+
 def apply_candidate(record, candidate, message, turn):
     if not isinstance(candidate, dict):
         return False
@@ -131,6 +152,8 @@ def apply_candidate(record, candidate, message, turn):
         return False
     if status == "recorded" and field != "photo" and value not in quote:
         return False
+    if record["task"] == "trap" and field == "quantity" and status == "recorded":
+        value = exact_spoken_trap_quantity(value, quote, message) or value
     before = record["fields"].get(field)
     correction = candidate.get("correction") is True and bool(CORRECTION.search(message))
     sources = [{"turn": turn, "quote": quote, "source": "text"}]
@@ -180,7 +203,7 @@ def set_field(record, field, current):
                                 "before": before, "after": current})
 
 
-def apply_turn(record, message, image="", extractor=None, *, rules_only=False):
+def apply_turn(record, message, image="", extractor=None, *, rules_only=False, photo_verifier=verify_trap_photo):
     if not isinstance(message, str) or len(message) > 2000:
         raise ValueError("请输入不超过 2000 字的描述。")
     if record["status"] not in {"draft", "returned"}:
@@ -191,6 +214,7 @@ def apply_turn(record, message, image="", extractor=None, *, rules_only=False):
         raise ValueError("请输入文字或上传图片。")
     if len(record["turns"]) >= 20:
         raise ValueError("单条记录最多支持 20 轮输入，请提交当前记录或新建记录。")
+    verification_deadline = monotonic() + PHOTO_VERIFICATION_WINDOW
     if rules_only:
         result, mode = rule_candidates(record, message), "rules"
     elif extractor is not None:
@@ -202,15 +226,26 @@ def apply_turn(record, message, image="", extractor=None, *, rules_only=False):
     else:
         result, mode = rule_candidates(record, message), "rules"
     quality = result.photo_quality if image and result.photo_quality in ("usable", "limited") else "unassessed"
-    count = result.visible_count
-    comparable = (record["task"] == "trap" and quality == "usable" and result.count_scope == "complete"
-                  and type(count) is int and 0 <= count <= 999)
+    visual = result.visual[:600] if image and isinstance(result.visual, str) else ""
+    count = None
+    if image and record["task"] == "trap" and mode == "model":
+        candidate_count = result.visible_count
+        timeout = min(PHOTO_VERIFICATION_TIMEOUT, verification_deadline - monotonic())
+        if (quality == "usable" and result.count_scope == "complete" and type(candidate_count) is int
+                and 0 <= candidate_count <= 999 and timeout >= 1):
+            verified = photo_verifier(image, timeout=timeout)
+            if type(verified) is int and verified == candidate_count:
+                count = verified
+        if count is None:
+            quality = "limited"
+            guidance = "整板计数尚未核实。可补拍一张能看清粘板四条边的照片。"
+            visual = " ".join(filter(None, (visual[:600 - len(guidance) - 1], guidance)))
     record["version"] += 1
     turn = len(record["turns"]) + 1
     record["turns"].append({"id": turn, "message": message, "image": image,
-                            "visual": result.visual[:600] if image and isinstance(result.visual, str) else "",
+                            "visual": visual,
                             "photo_quality": quality, "extraction_mode": mode,
-                            "visible_count": count if comparable else None,
+                            "visible_count": count,
                             "photo_unavailable": bool(PHOTO_REPLY.search(message)),
                             "time": datetime.now().astimezone().isoformat(timespec="seconds")})
     has_quantity = False
@@ -236,21 +271,25 @@ def evidence_alerts(record):
     quantity = record["fields"].get("quantity", {})
     if record["task"] != "trap" or quantity.get("status") != "recorded" or quantity.get("review_version"):
         return []
-    match = re.fullmatch(r"(\d{1,3}|[零〇一二两三四五六七八九十])\s*只", quantity["value"])
-    if not match:
-        return []
-    value = match[1]
-    digits = dict(zip("零一二三四五六七八九", range(10))) | {"〇": 0, "两": 2, "十": 10}
-    reported = int(value) if value.isdecimal() else digits[value]
     alerts = []
+    digits = dict(zip("零一二三四五六七八九", range(10))) | {"〇": 0, "两": 2}
     for evidence in quantity["evidence"]:
-        if evidence.get("superseded") or quantity["value"] not in evidence.get("quote", ""):
-            continue
-        if HEDGED.search(evidence["quote"]) or re.search(r"约|左右|上下", evidence["quote"]):
+        if evidence.get("superseded") or not evidence.get("quote"):
             continue
         turn = record["turns"][evidence["turn"] - 1]
         visible = turn.get("visible_count")
-        if visible is not None and reported != visible:
+        if visible is None:
+            continue
+        count = exact_spoken_trap_quantity(quantity["value"], evidence["quote"], turn["message"])
+        if not count:
+            continue
+        numeral = count.removesuffix("只").strip()
+        if "十" in numeral:
+            tens, units = numeral.split("十")
+            reported = 10 * digits.get(tens, 1) + digits.get(units, 0)
+        else:
+            reported = int(numeral) if numeral.isdecimal() else digits[numeral]
+        if reported != visible:
             alerts.append({"message": "口述数量与照片可见数量有差异，需人工核对",
                            "turn": turn["id"], "quote": evidence["quote"],
                            "reported": reported, "visible": visible})

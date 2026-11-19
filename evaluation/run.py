@@ -77,8 +77,10 @@ def run_case(case, directory, mode, inputs):
         if "review" in step:
             review(record, step["review"])
         else:
-            extractor = fixture_extractor(step.get("fixture", {})) if mode == "fixture" else None
-            apply_turn(record, step["message"], image, extractor=extractor, rules_only=mode == "rules")
+            fixture = step.get("fixture", {})
+            extractor = fixture_extractor(fixture) if mode == "fixture" else None
+            apply_turn(record, step["message"], image, extractor=extractor, rules_only=mode == "rules",
+                       photo_verifier=lambda _image, *, timeout: fixture.get("verified_count"))
         actual = snapshot(record)
         expected = step.get("expect", {}) | step.get("expect_by_variant", {}).get(variant, {})
         steps.append({

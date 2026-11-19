@@ -17,3 +17,4 @@
 - [2026-11-19 双端合并与主线开发交接](2026-11-19-workflow-main-handoff.md)
 - [2026-11-19 小程序连接超时与状态提示](2026-11-19-miniprogram-connection-timeout.md)
 - [2026-11-19 模拟图片与真实模型对照评测](2026-11-19-evaluation-live-model.md)
+- [2026-11-19 口述数量与诱捕粘板覆盖核验](2026-11-19-backend-trap-count-verification.md)

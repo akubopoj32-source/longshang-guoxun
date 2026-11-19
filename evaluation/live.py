@@ -6,6 +6,7 @@ import json
 import os
 from dataclasses import asdict
 from pathlib import Path
+from time import monotonic
 
 from evaluation.run import compare_expectations, load_image
 from orchard_workbench.extraction import ModelUnavailable, extract_with_model, model_enabled
@@ -19,8 +20,16 @@ GROUPS = ("text", "image_candidates", "image_constrained")
 def evaluate_step(record, step, image, use_image):
     message = step["message"]
     expected = step["expect"]
-    extraction = extract_with_model(record, TASKS[record["task"]]["fields"], message, image)
-    apply_turn(record, message, image, extractor=lambda *_: extraction)
+    started = monotonic()
+    extraction = None
+
+    def capture_candidates(current_record, current_message, current_image):
+        nonlocal extraction
+        extraction = extract_with_model(current_record, TASKS[current_record["task"]]["fields"],
+                                        current_message, current_image)
+        return extraction
+
+    apply_turn(record, message, image, extractor=capture_candidates)
     turn = record["turns"][-1]
     fields = {key: field["value"] for key, field in record["fields"].items()}
     written = {key for key, field in record["fields"].items()
@@ -46,7 +55,8 @@ def evaluate_step(record, step, image, use_image):
     details = {"fields": record["fields"].copy(), "questions": record["questions"],
                "correction_history": history, "photo_quality": turn["photo_quality"],
                "visual": turn["visual"], "visible_count": turn["visible_count"],
-               "count_conflict": count_conflict, "alerts": alerts, "checks": checks}
+               "count_conflict": count_conflict, "alerts": alerts, "checks": checks,
+               "elapsed_seconds": round(monotonic() - started, 3)}
     if retained := expected.get("retained"):
         checks["retention"] = compare_expectations(fields, retained)
     if corrections := expected.get("corrections"):

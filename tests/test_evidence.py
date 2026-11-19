@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import patch
 
-from orchard_workbench.extraction import Extraction
+from orchard_workbench.extraction import Extraction, ModelUnavailable
 from orchard_workbench.orchard import apply_turn, evidence_alerts, new_record, pending_items, review, review_field
 
 
@@ -8,6 +9,8 @@ PHOTO = (
     "data:image/png;base64,"
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/N5kAAAAASUVORK5CYII="
 )
+FULL_BOARD = {"single_board": True, "top": True, "right": True, "bottom": True,
+              "left": True, "countable": True, "visible_count": 3}
 
 
 def count_extraction(scope):
@@ -27,7 +30,8 @@ class EvidenceTests(unittest.TestCase):
     def test_model_quantity_omission_recovers_spoken_count_and_image_alert(self):
         record = new_record("trap")
         message = "三号点看到两只疑似虫体"
-        apply_turn(record, message, PHOTO, lambda *_: Extraction([], "图中有三个标记", "usable", 3, "complete"))
+        with patch("orchard_workbench.extraction.request_model_json", return_value=FULL_BOARD):
+            apply_turn(record, message, PHOTO, lambda *_: Extraction([], "图中有三个标记", "usable", 3, "complete"))
 
         quantity = record["fields"]["quantity"]
         self.assertEqual(quantity["value"], "两只")
@@ -42,7 +46,8 @@ class EvidenceTests(unittest.TestCase):
                         "观察数量记不清", "只上传图片"):
             with self.subTest(message=message):
                 record = new_record("trap")
-                apply_turn(record, message, PHOTO, lambda *_: Extraction([], "图中有三个标记", "usable", 3, "complete"))
+                apply_turn(record, message, PHOTO, lambda *_: Extraction([], "图中有三个标记", "usable", 3, "complete"),
+                           photo_verifier=lambda image, *, timeout: 3)
                 self.assertNotIn("quantity", record["fields"])
                 self.assertEqual(evidence_alerts(record), [])
 
@@ -55,7 +60,8 @@ class EvidenceTests(unittest.TestCase):
 
     def test_quantity_difference_survives_repeat_but_not_correction(self):
         record = new_record("trap")
-        apply_turn(record, "看到两只疑似虫体", PHOTO, count_extraction("complete"))
+        with patch("orchard_workbench.extraction.request_model_json", return_value=FULL_BOARD):
+            apply_turn(record, "看到两只疑似虫体", PHOTO, count_extraction("complete"))
         apply_turn(record, "看到两只疑似虫体", rules_only=True)
         self.assertEqual(record["fields"]["quantity"]["value"], "两只")
         alert, = evidence_alerts(record)
@@ -72,9 +78,59 @@ class EvidenceTests(unittest.TestCase):
         apply_turn(record, "看到两只疑似虫体", PHOTO, count_extraction("partial"))
         self.assertEqual(evidence_alerts(record), [])
 
+    def test_quantity_phrase_keeps_the_quote_and_compares_its_number(self):
+        for phrase, number in (("三只疑似虫体", 3), ("二十一只虫体", 21), ("0只虫体", 0)):
+            with self.subTest(phrase=phrase):
+                record = new_record("trap")
+                message = "今天上午，三号监测点看到" + phrase + "。"
+                candidate = {"field": "quantity", "value": phrase, "quote": message, "status": "recorded"}
+                with patch("orchard_workbench.extraction.request_model_json", return_value={**FULL_BOARD, "visible_count": 2}):
+                    apply_turn(record, message, PHOTO, lambda *_: Extraction([candidate], "", "usable", 2, "complete"))
+                quantity = record["fields"]["quantity"]
+                self.assertEqual(quantity["value"], phrase.split("只")[0] + "只")
+                self.assertEqual(quantity["evidence"][0]["quote"], message)
+                alert, = evidence_alerts(record)
+                self.assertEqual(alert["reported"], number)
+                # A record written before the normalization stores the entire phrase.
+                quantity["value"] = phrase
+                self.assertEqual(evidence_alerts(record)[0]["reported"], number)
+
+    def test_unqualified_model_quote_cannot_hide_uncertain_spoken_count(self):
+        for message in ("看到大约三只疑似虫体", "看到两三只疑似虫体", "看到2-三只疑似虫体", "没有看到三只疑似虫体"):
+            with self.subTest(message=message):
+                record = new_record("trap")
+                candidate = {"field": "quantity", "value": "三只", "quote": "三只", "status": "recorded"}
+                apply_turn(record, message, PHOTO, lambda *_: Extraction([candidate], "", "usable", 2, "complete"),
+                           photo_verifier=lambda image, *, timeout: 2)
+                self.assertEqual(evidence_alerts(record), [])
+
+    def test_unverified_full_board_preserves_input_without_count_alert(self):
+        message = "三号点今天上午看到两只疑似虫体"
+        transcript = [{"field": "observation", "value": message, "quote": message, "status": "recorded"},
+                      {"field": "location", "value": "三号点", "quote": message, "status": "recorded"},
+                      {"field": "time", "value": "今天上午", "quote": message, "status": "recorded"}]
+        denied = ({**FULL_BOARD, "right": False, "bottom": False, "visible_count": 1}, FULL_BOARD, {})
+        for response in (*denied, ModelUnavailable("复核超时")):
+            with self.subTest(response=response):
+                record = new_record("trap")
+                options = {"side_effect": response} if isinstance(response, Exception) else {"return_value": response}
+                with patch("orchard_workbench.extraction.request_model_json", **options) as request:
+                    apply_turn(record, message, PHOTO,
+                               lambda *_: Extraction(transcript, "局部可见一只", "usable", 1, "complete"))
+                prompt, content = request.call_args.args
+                self.assertEqual(content, [{"type": "image_url", "image_url": {"url": PHOTO}}])
+                self.assertLessEqual(request.call_args.kwargs["timeout"], 8)
+                self.assertEqual(evidence_alerts(record), [])
+                self.assertEqual(record["fields"]["quantity"]["value"], "两只")
+                self.assertEqual(record["turns"][0]["image"], PHOTO)
+                self.assertIn("局部可见一只", record["turns"][0]["visual"])
+                self.assertIsNone(record["turns"][0]["visible_count"])
+                self.assertEqual(record["questions"], ["photo_detail"])
+
     def test_manual_review_keeps_previous_quantity_and_photo_discrepancy(self):
         record = new_record("trap")
-        apply_turn(record, "看到两只疑似虫体", PHOTO, count_extraction("complete"))
+        with patch("orchard_workbench.extraction.request_model_json", return_value=FULL_BOARD):
+            apply_turn(record, "看到两只疑似虫体", PHOTO, count_extraction("complete"))
         review(record, "submit")
         review_field(record, "quantity", "mark_unknown", note="待现场清点")
 

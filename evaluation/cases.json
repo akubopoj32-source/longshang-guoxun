@@ -59,7 +59,8 @@
             "visual": "示意图完整显示一个监测区域，其中有三处可数的标记",
             "photo_quality": "usable",
             "visible_count": 3,
-            "count_scope": "complete"
+            "count_scope": "complete",
+            "verified_count": 3
           },
           "expect": {"fields.quantity.value": "两只", "alerts": [], "questions": ["photo"]},
           "expect_by_variant": {

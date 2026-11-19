@@ -54,7 +54,28 @@ def extract_with_model(record, fields, message, image):
                       result.get("visible_count"), result.get("count_scope"))
 
 
-def request_model_json(prompt, content):
+def verify_trap_photo(image, *, timeout):
+    prompt = (
+        "独立复核一张诱捕粘板照片。只看图，不应猜测、补全图外或遮挡部分。"
+        "先核对是否只有一块可检查的粘板，再逐条检查粘板的上、右、下、左边界。"
+        "边界必须从一端连续可见到另一端，且完整位于画面内。"
+        "如果板面延伸到照片边缘、边界被遮挡、或只能看到外壳边缘，则该边为 false。"
+        "仅当四条边都可确认、整板清晰且可数清疑似虫体时，才返回整板可见整数数量，否则为 null。"
+        '只返回 JSON：{"single_board":false,"top":false,"right":false,"bottom":false,'
+        '"left":false,"countable":false,"visible_count":null}。'
+    )
+    content = [{"type": "image_url", "image_url": {"url": image}}]
+    try:
+        result = request_model_json(prompt, content, timeout=timeout)
+    except ModelUnavailable:
+        return None
+    if not all(result.get(key) is True for key in ("single_board", "top", "right", "bottom", "left", "countable")):
+        return None
+    count = result.get("visible_count")
+    return count if type(count) is int and 0 <= count <= 999 else None
+
+
+def request_model_json(prompt, content, *, timeout=30):
     payload = {"model": os.environ["ORCHARD_MODEL"], "messages": [
         {"role": "system", "content": prompt}, {"role": "user", "content": content},
     ]}
@@ -65,7 +86,7 @@ def request_model_json(prompt, content):
     try:
         request = Request(os.environ["ORCHARD_MODEL_URL"],
                           json.dumps(payload, ensure_ascii=False).encode(), headers)
-        with urlopen(request, timeout=30) as response:
+        with urlopen(request, timeout=timeout) as response:
             raw = response.read(1024 * 1024 + 1)
         if len(raw) > 1024 * 1024:
             raise ValueError("Extraction response exceeds size limit")
