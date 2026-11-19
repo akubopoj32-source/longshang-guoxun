@@ -2,8 +2,10 @@
 
 import argparse
 import base64
+import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -31,6 +33,19 @@ ASSETS = {
 MAX_REQUEST = 6 * 1024 * 1024
 MAX_TRANSCRIBE_REQUEST = ((MAX_AUDIO_BYTES + 2) // 3) * 4 + 4096
 MAX_ACCOUNT_REQUEST = 8192
+SUBMISSION_ID = re.compile(r"[a-f0-9]{32}")
+
+
+def turn_submission(data):
+    submission_id = data.get("submission_id")
+    if "submission_id" not in data:
+        return None
+    if not isinstance(submission_id, str) or not SUBMISSION_ID.fullmatch(submission_id):
+        raise ValueError("本轮提交编号格式无效。")
+    fields = [data.get(key) for key in ("version", "status")]
+    fields.extend((data.get("message", ""), data.get("image", ""), data.get("rules_only", False)))
+    digest = hashlib.sha256(json.dumps(fields, separators=(",", ":")).encode()).hexdigest()
+    return {"id": submission_id, "digest": digest}
 
 
 class Workbench(BaseHTTPRequestHandler):
@@ -92,6 +107,7 @@ class Workbench(BaseHTTPRequestHandler):
                 "visual": turn.get("visual", ""), "photo_quality": turn.get("photo_quality", "unassessed"),
                 "extraction_mode": turn.get("extraction_mode"), "visible_count": turn.get("visible_count"),
                 "photo_unavailable": turn.get("photo_unavailable", False), "time": turn.get("time"),
+                "submission_id": turn.get("submission", {}).get("id"),
             } for turn in record["turns"]],
             "revisions": record["revisions"],
             "reviews": record["reviews"],
@@ -113,6 +129,9 @@ class Workbench(BaseHTTPRequestHandler):
         if urlsplit(self.path).query == "view=mobile":
             response["record"] = self.mobile_record(record)
         else:
+            response["record"] = {**record, "turns": [
+                {key: value for key, value in turn.items() if key != "submission"} for turn in record["turns"]
+            ]}
             response["evidence_alerts"] = evidence_alerts(record)
         return response
 
@@ -129,6 +148,19 @@ class Workbench(BaseHTTPRequestHandler):
 
     def stale_record(self):
         self.send_json(409, {"error": "记录已在其他页面更新，请刷新后重试。"})
+
+    def replay_turn(self, record_id, record, submission):
+        if submission is None:
+            return False
+        for turn in record["turns"]:
+            saved = turn.get("submission")
+            if saved and saved["id"] == submission["id"]:
+                if saved["digest"] != submission["digest"]:
+                    self.send_json(409, {"error": "该提交编号已绑定另一份输入，请刷新记录。", "code": "submission_conflict"})
+                else:
+                    self.send_json(200, self.record_response(record_id, record))
+                return True
+        return False
 
     def database_error(self, error):
         code = getattr(error, "sqlite_errorcode", 0) & 0xFF
@@ -240,6 +272,7 @@ class Workbench(BaseHTTPRequestHandler):
                 self.send_json(200, {"transcript": transcript})
                 return
             write_version = None
+            submission = None
             if path == "/api/records":
                 task = data.get("task")
                 if not isinstance(task, str):
@@ -258,6 +291,10 @@ class Workbench(BaseHTTPRequestHandler):
                     self.send_json(404, {"error": "记录不存在。"})
                     return
                 record, write_version = saved
+                if action == "turn":
+                    submission = turn_submission(data)
+                    if self.replay_turn(record_id, record, submission):
+                        return
                 if data.get("version") != record["version"] or data.get("status") != record["status"]:
                     self.stale_record()
                     return
@@ -266,6 +303,8 @@ class Workbench(BaseHTTPRequestHandler):
                     if not isinstance(rules_only, bool):
                         raise ValueError("本轮处理方式无效。")
                     apply_turn(record, data.get("message", ""), data.get("image", ""), rules_only=rules_only)
+                    if submission is not None:
+                        record["turns"][-1]["submission"] = submission
                 elif action == "field-review":
                     review_field(record, data.get("field"), data.get("action"),
                                  data.get("value", ""), data.get("note", ""))
@@ -276,6 +315,10 @@ class Workbench(BaseHTTPRequestHandler):
                     review(record, operation, data.get("note", ""))
             record["updated_at"] = datetime.now(timezone.utc).isoformat()
             if not self.server.store.save(record_id, record, write_version, owner_id=self.owner_id, session_hash=self.session_hash):
+                if submission is not None:
+                    current = self.server.store.load(record_id, owner_id=self.owner_id)
+                    if current and self.replay_turn(record_id, current[0], submission):
+                        return
                 self.stale_record()
                 return
             self.send_json(200, self.record_response(record_id, record))

@@ -1,7 +1,8 @@
-const { saveLastRecord, request, recordPath, downloadPhoto, statusNames } = require("../../utils/api");
+const { connection, saveLastRecord, request, recordPath, downloadPhoto, statusNames } = require("../../utils/api");
 const { presentRecord } = require("../../utils/present");
 const { checklist, jsonReport, fileName, shareFile, copyText } = require("../../utils/export");
 const { choosePhoto, readPhoto } = require("../../utils/photo");
+const { draftKey, loadDraft, storeDraft, newSubmissionId, retainDraftPhoto, removeDraftPhoto } = require("../../utils/draft");
 const voice = require("../../utils/voice");
 
 Page({
@@ -10,6 +11,7 @@ Page({
     fields: [], pending: [], turns: [], alerts: [], revisions: [], reviews: [], fieldReviews: [],
     editable: false, canSubmit: false, photoCount: 0, question: "", reviewNote: "",
     message: "", photo: "", busy: false, busyLabel: "", error: "", notice: "",
+    hasDraft: false, awaitingSave: false, draftError: "", draftAccessDenied: false,
     rulesFallback: false, showHistory: false,
     recording: false, recordSeconds: 0, voice: "", voiceDuration: "", transcribing: false, voiceTranscribed: false,
     canRecord: false, voiceReady: false, voiceNote: "",
@@ -24,8 +26,16 @@ Page({
       this.setData({ error: "记录编号无效。" });
       return null;
     }
+    this.draftKey = draftKey(id);
+    try {
+      this.draft = loadDraft(this.draftKey);
+    } catch {
+      this.draft = { message: "", photo: "", submission: null };
+      this.setData({ draftError: "本机草稿暂时无法读取。" });
+    }
     saveLastRecord(id);
     this.setData({ id });
+    if (connection().token) this.showDraft(this.data.draftError);
     return this.refresh();
   },
 
@@ -58,12 +68,14 @@ Page({
       mode: config.mode,
       canReview: config.access !== "inspector",
       sessionExpired: false,
+      draftAccessDenied: false,
       voiceReady: Boolean(config.voice),
       canRecord,
       voiceNote: !canRecord ? ""
         : config.voice ? "" : "服务端未配置语音转写，可手动补充文字。",
     });
     this.apply(result);
+    this.restoreDraft(result.record);
   },
 
   refresh() {
@@ -72,6 +84,52 @@ Page({
   },
 
   returnToLogin() { wx.reLaunch({ url: "/pages/index/index" }); },
+
+  showDraft(error = "") {
+    const { message, photo, submission } = this.draft;
+    this.setData({ message, photo, awaitingSave: Boolean(submission),
+      hasDraft: Boolean(message || photo), draftError: error });
+  },
+
+  updateDraft(next) {
+    storeDraft(this.draftKey, next);
+    if (this.draft.photo !== next.photo) removeDraftPhoto(this.draft.photo);
+    this.draft = next;
+    if (!this.unloaded) this.showDraft();
+  },
+
+  restoreDraft(record) {
+    const attempt = this.draft.submission;
+    if (attempt && record.turns.some(turn => turn.submission_id === attempt.id)) {
+      this.finishTurn("已核对服务端记录，本轮输入此前已保存。");
+      return;
+    }
+    if (this.badDraftPhoto && this.badDraftPhoto === this.draft.photo) {
+      this.updateDraft({ ...this.draft, photo: "", submission: null });
+      this.badDraftPhoto = "";
+      this.setData({ notice: "本机照片不再可读。草稿文字已保留，请重新选择照片。" });
+      return;
+    }
+    if (attempt && (record.version !== attempt.version || record.status !== attempt.status)) {
+      this.updateDraft({ ...this.draft, submission: null });
+      this.setData({ notice: "记录已在其他页面更新。本机草稿已保留，请核对后再保存。" });
+    } else {
+      this.showDraft(this.data.draftError);
+    }
+  },
+
+  finishTurn(notice) {
+    const empty = { message: "", photo: "", submission: null };
+    try {
+      this.updateDraft(empty);
+    } catch (error) {
+      this.draft = empty;
+      this.showDraft(error.message);
+    }
+    this.setData({
+      rulesFallback: false, voice: "", voiceDuration: "", voiceTranscribed: false, recordSeconds: 0, notice,
+    });
+  },
 
   apply(result) {
     const record = result.record;
@@ -107,16 +165,38 @@ Page({
     });
   },
 
-  editMessage(event) { this.setData({ message: event.detail.value }); },
-  removePhoto() { this.setData({ photo: "" }); },
+  editMessage(event) {
+    if (this.draft.submission) return;
+    const next = { ...this.draft, message: event.detail.value };
+    try {
+      this.updateDraft(next);
+    } catch (error) {
+      // Keep the text in the form so the operator can retry or copy it.
+      this.draft = next;
+      this.showDraft(error.message);
+    }
+  },
+
+  removePhoto() {
+    if (this.draft.submission) return;
+    return this.run(() => this.updateDraft({ ...this.draft, photo: "" }));
+  },
   toggleHistory() { this.setData({ showHistory: !this.data.showHistory }); },
   editReviewValue(event) { this.setData({ reviewValue: event.detail.value }); },
   editReviewNote(event) { this.setData({ reviewNoteInput: event.detail.value }); },
 
   attachPhoto() {
+    if (this.draft.submission) return;
     return this.run(async () => {
-      const photo = await choosePhoto();
-      if (photo) this.setData({ photo });
+      const selected = await choosePhoto();
+      if (!selected || this.unloaded) return;
+      const photo = await retainDraftPhoto(selected);
+      try {
+        this.updateDraft({ ...this.draft, photo });
+      } catch (error) {
+        removeDraftPhoto(photo);
+        throw error;
+      }
     }, "正在读取照片…");
   },
 
@@ -176,7 +256,8 @@ Page({
       const transcript = await voice.transcribe(this.data.voice, this.data.title);
       const merged = [this.data.message.trim(), transcript].filter(Boolean).join(" ");
       if (merged.length > 2000) throw new Error("描述与转写合计超过 2000 字，请缩短描述后重试。");
-      this.setData({ message: merged, voiceTranscribed: true, notice: "语音已转写，请核对文字后再保存。" });
+      this.editMessage({ detail: { value: merged } });
+      this.setData({ voiceTranscribed: true, notice: "语音已转写，请核对文字后再保存。" });
     }, "正在转写语音…").finally(() => this.setData({ transcribing: false }));
   },
 
@@ -193,21 +274,40 @@ Page({
   },
 
   saveTurn(event) {
-    if (this.data.recording) return;
+    if (this.data.recording || !this.data.editable) return;
     const rulesOnly = event.currentTarget.dataset.rules === "yes";
     return this.run(async () => {
-      const { id, version, status, message, photo } = this.data;
+      const { id, version, status } = this.data;
+      const { message, photo, submission: previous } = this.draft;
       if (!message.trim() && !photo) throw new Error("请先输入描述或选择照片。");
-      const image = await readPhoto(photo);
-      const result = await request(recordPath(id, "turn"), {
-        version, status, message, image, rules_only: rulesOnly,
-      });
-      this.apply(result);
-      this.setData({
-        message: "", photo: "", rulesFallback: false,
-        voice: "", voiceDuration: "", voiceTranscribed: false, recordSeconds: 0,
-        notice: "本轮输入已保存。",
-      });
+      let image;
+      try {
+        image = await readPhoto(photo);
+      } catch (error) {
+        if (previous) {
+          this.badDraftPhoto = photo;
+          throw new Error("本机照片无法读取，请先刷新核对保存结果。");
+        }
+        throw error;
+      }
+      const attempt = previous || { id: newSubmissionId(), version, status, rulesOnly };
+      if (!previous) this.updateDraft({ ...this.draft, submission: attempt });
+      try {
+        const result = await request(recordPath(id, "turn"), {
+          version: attempt.version, status: attempt.status, message, image,
+          rules_only: attempt.rulesOnly, submission_id: attempt.id,
+        });
+        this.apply(result);
+        this.finishTurn("本轮输入已保存。");
+      } catch (error) {
+        // A rejected payload cannot be saved as-is. Transient errors on retries
+        // keep the attempt until the client confirms the server's state.
+        const rejected = ["bad_request", "submission_conflict"].includes(error.code);
+        if (rejected || (!previous && ["model_unavailable", "stale"].includes(error.code))) {
+          this.updateDraft({ ...this.draft, submission: null });
+        }
+        throw error;
+      }
     }, "正在处理本轮输入…", true);
   },
 
@@ -216,7 +316,13 @@ Page({
     return this.run(async () => {
       const { id, version, status, message, photo } = this.data;
       if (message.trim() || photo) throw new Error("请先处理本轮输入，再提交复核。");
-      this.apply(await request(recordPath(id, "review"), { version, status, action: "submit" }));
+      try {
+        this.apply(await request(recordPath(id, "review"), { version, status, action: "submit" }));
+      } catch (error) {
+        if (error.code !== "network") throw error;
+        try { await this.load(); } catch { throw error; }
+        if (!["pending", "confirmed"].includes(this.data.status)) throw error;
+      }
       this.setData({ notice: "已提交电脑端复核。" });
     }, "正在提交复核…");
   },
@@ -322,14 +428,16 @@ Page({
       await action();
     } catch (error) {
       this.setData({ error: error.message });
-      if (allowRulesFallback && error.code === "model_unavailable") this.setData({ rulesFallback: true });
+      if (allowRulesFallback && error.code === "model_unavailable" && !this.draft.submission) {
+        this.setData({ rulesFallback: true });
+      }
       // A stale write means another page changed the record; reload so the
       // user works against the current version instead of retrying blindly.
-      if (error.code === "stale") {
+      if (error.code === "stale" || error.code === "submission_conflict") {
         try { await this.load(); } catch (ignored) { /* keep the stale message. */ }
       }
       if (error.code === "not_found" || error.code === "unauthorized") {
-        this.setData({ editable: false, canSubmit: false });
+        this.setData({ editable: false, canSubmit: false, draftAccessDenied: true });
       }
       if (error.code === "session_expired" || error.code === "session_required") {
         this.setData({ sessionExpired: true, status: "", editable: false, canSubmit: false });

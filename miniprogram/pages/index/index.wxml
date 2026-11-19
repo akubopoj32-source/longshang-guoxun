@@ -33,6 +33,8 @@
   <view wx:if="{{error}}" class="error" aria-role="alert">{{error}}</view>
   <view wx:if="{{notice}}" class="question">{{notice}}</view>
   <view wx:if="{{connectionStage}}" class="muted">{{connectionStage}}</view>
+  <button wx:if="{{!connected && offlineDraft}}" class="secondary spaced" disabled="{{busy}}"
+          bindtap="resumeRecord">打开上次的本机草稿</button>
 
   <block wx:if="{{connected}}">
     <view wx:if="{{resumeId}}" class="resume" bindtap="resumeRecord" aria-role="button">

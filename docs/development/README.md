@@ -19,3 +19,4 @@
 - [2026-11-19 模拟图片与真实模型对照评测](2026-11-19-evaluation-live-model.md)
 - [2026-11-19 口述数量与诱捕粘板覆盖核验](2026-11-19-backend-trap-count-verification.md)
 - [2026-11-19 巡查人员管理与小程序账号登录](2026-11-19-accounts-inspector-login.md)
+- [2026-11-19 小程序草稿恢复与重复提交防护](2026-11-19-miniprogram-draft-recovery.md)

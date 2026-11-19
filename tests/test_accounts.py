@@ -2,16 +2,17 @@ import json
 import secrets
 import sqlite3
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Thread
+from threading import Barrier, Thread
 from unittest.mock import patch
 
 from orchard_workbench.accounts import AccountError, InspectorAccounts
-from orchard_workbench.orchard import new_record
+from orchard_workbench.orchard import apply_turn, new_record
 from orchard_workbench.server import Workbench
 from orchard_workbench.storage import RecordStore
 
@@ -151,6 +152,32 @@ class AccountTests(unittest.TestCase):
         with self.assertRaises(AccountError) as rejected:
             handler.authorize("/api/inspectors")
         self.assertEqual(rejected.exception.status, 401)
+
+    def test_duplicate_turn_requests_return_the_saved_record(self):
+        self.create_user("field.a")
+        token = self.login("field.a")["token"]
+        record = self.request("/api/records", {"task": "trap"}, token=token)
+        path = f"/api/records/{record['id']}"
+        payload = {"version": 0, "status": "draft", "message": "三号监测点发现两只疑似虫体", "image": PHOTO,
+                   "rules_only": True, "submission_id": "a" * 32}
+        barrier = Barrier(2, timeout=3)
+
+        def synchronized_turn(*args, **kwargs):
+            barrier.wait()
+            return apply_turn(*args, **kwargs)
+
+        with patch("orchard_workbench.server.apply_turn", side_effect=synchronized_turn), ThreadPoolExecutor(2) as pool:
+            replies = [pool.submit(self.request, path + "/turn?view=mobile", payload, token=token) for _ in range(2)]
+            self.assertEqual([r.result()["record"]["turn_count"] for r in replies], [1, 1])
+        self.request(path + "/review", {"version": 1, "status": "draft", "action": "submit"}, token=token)
+        response = self.request(path + "/turn?view=mobile", payload, token=token)["record"]
+        self.assertEqual((response["version"], response["status"], response["photo_count"]), (1, "pending", 1))
+        self.assertEqual(response["turns"][0]["submission_id"], payload["submission_id"])
+        self.assertNotIn("submission", response["turns"][0])
+        self.assertNotIn("submission", self.request(path, admin=True)["record"]["turns"][0])
+        conflict = self.request(path + "/turn", {**payload, "message": "不同的一轮"}, token=token, expected=409)
+        self.assertEqual(conflict["code"], "submission_conflict")
+        self.request(path + "/turn", {**payload, "submission_id": "invalid"}, token=token, expected=400)
 
     def test_v1_migration_keeps_records_unassigned(self):
         prior = RecordStore(self.store.path.with_name("v1.sqlite3"))

@@ -33,6 +33,7 @@ npm run build:win
 - 详情页按字段列出证据原话，点开可跳到对应的原始证据轮次和照片；被更正过的字段会同时列出旧原话并标注已被取代。
 - 记录待复核时可就地逐项复核：确认现值、人工更正（必须填写更正依据）或标记为待核实。
 - 导出复查单（Markdown）或 JSON，也可复制复查单文本。文件分享在模拟器等环境不可用时自动改为复制到剪贴板。
+- 已建记录的本轮文字、转写后的描述和待上传照片自动保存到当前账号的本机草稿。断网重开小程序时可从首页打开上次的草稿，恢复连接后刷新记录再上传。如果本轮保存超时，先点「核对保存结果」，也可点「重试保存本轮」继续同一次提交。
 
 1. 安装[微信开发者工具](https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html)，扫码登录后导入仓库的 `miniprogram/` 目录。在导入窗口填写自己有开发权限的小程序 AppID，本地编译也可以选择「测试号」。
 2. 在项目根目录的 PowerShell 启动共享服务。示例端口为 `8875`，数据保存在独立的联调数据库中。
@@ -153,6 +154,7 @@ python app.py
 
 ```powershell
 python -m unittest discover -s tests
+node --test tests/miniprogram-draft.test.cjs
 python -m evaluation.run --mode fixture --input multimodal --output 'local/评测结果/模拟图文.json'
 python -m evaluation.run --mode fixture --input text --output 'local/评测结果/模拟纯文本.json'
 python -m evaluation.run --mode rules --input multimodal --output 'local/评测结果/规则图文.json'

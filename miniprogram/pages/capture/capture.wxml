@@ -27,16 +27,20 @@
         <text class="anchor-link" bindtap="scrollToEvidence" data-anchor="{{item.anchor}}">{{item.linkText}}</text>
       </view>
     </view>
+  </block>
 
     <!-- 本轮录入 -->
-    <view wx:if="{{editable}}" class="card">
-      <view class="question">{{question}}</view>
+    <view wx:if="{{editable || (!status && hasDraft && !sessionExpired && !draftAccessDenied)}}" class="card">
+      <view class="question">{{status ? question : '已打开本机草稿。恢复连接后刷新即可提交。'}}</view>
+      <view wx:if="{{awaitingSave}}" class="muted spaced">本轮保存结果待核对。可刷新记录或重试同一轮。</view>
+      <view wx:elif="{{hasDraft && !draftError}}" class="muted spaced">本机草稿已保存</view>
+      <view wx:if="{{draftError}}" class="error">{{draftError}}</view>
       <label class="label" for="message">现场描述</label>
-      <textarea id="message" value="{{message}}" bindinput="editMessage" maxlength="2000" disabled="{{busy}}"
+      <textarea id="message" value="{{message}}" bindinput="editMessage" maxlength="2000" disabled="{{busy || awaitingSave}}"
                 placeholder="例如：三号点看到两只疑似虫体" auto-height="{{false}}" />
 
       <!-- 语音输入 -->
-      <view wx:if="{{canRecord}}" class="voice">
+      <view wx:if="{{canRecord && !awaitingSave}}" class="voice">
         <button class="secondary voice-btn {{recording ? 'voice-on' : ''}}"
                 disabled="{{busy || transcribing}}" bindtap="toggleRecord">
           {{recording ? '停止录音 ' + recordSeconds + 's' : (voice ? '重新录音' : '开始录音')}}
@@ -53,13 +57,15 @@
 
       <image wx:if="{{photo}}" class="photo spaced" mode="aspectFit" src="{{photo}}" aria-label="待上传的巡查照片" />
       <view class="button-row spaced">
-        <button class="secondary" disabled="{{busy}}" bindtap="attachPhoto">{{photo ? '更换照片' : '拍照或选照片'}}</button>
-        <button wx:if="{{photo}}" class="secondary" disabled="{{busy}}" bindtap="removePhoto">移除</button>
+        <button class="secondary" disabled="{{busy || awaitingSave}}" bindtap="attachPhoto">{{photo ? '更换照片' : '拍照或选照片'}}</button>
+        <button wx:if="{{photo}}" class="secondary" disabled="{{busy || awaitingSave}}" bindtap="removePhoto">移除</button>
       </view>
-      <button class="primary spaced" loading="{{busy}}" disabled="{{busy || recording}}" bindtap="saveTurn">处理本轮输入</button>
-      <button wx:if="{{rulesFallback}}" class="secondary spaced" disabled="{{busy || recording}}" bindtap="saveTurn" data-rules="yes">用规则保存本轮</button>
+      <button class="primary spaced" loading="{{busy}}" disabled="{{busy || recording || !editable}}" bindtap="saveTurn">{{awaitingSave ? '重试保存本轮' : '处理本轮输入'}}</button>
+      <button wx:if="{{awaitingSave}}" class="secondary spaced" disabled="{{busy}}" bindtap="refresh">核对保存结果</button>
+      <button wx:if="{{rulesFallback && !awaitingSave}}" class="secondary spaced" disabled="{{busy || recording || !editable}}" bindtap="saveTurn" data-rules="yes">用规则保存本轮</button>
     </view>
 
+  <block wx:if="{{status}}">
     <!-- 巡查字段 -->
     <view class="card">
       <view class="section-title">巡查字段</view>

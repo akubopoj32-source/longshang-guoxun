@@ -3,6 +3,7 @@ const {
   request, statusNames,
 } = require("../../utils/api");
 const { formatTime } = require("../../utils/present");
+const { hasLocalDraft } = require("../../utils/draft");
 
 const filters = [
   { key: "", label: "全部" },
@@ -19,7 +20,7 @@ Page({
     origin: "", token: "", showSettings: false, busy: false, connectionStage: "", error: "", notice: "",
     authMode: "account", username: "", password: "", currentUser: null,
     connected: false, tasks: [], taskIndex: 0, filter: "", query: "",
-    filters, records: [], visibleRecords: [], totalCount: 0, mode: "", resumeId: "", resumeShort: "",
+    filters, records: [], visibleRecords: [], totalCount: 0, mode: "", resumeId: "", resumeShort: "", offlineDraft: false,
   },
 
   onLoad() {
@@ -36,6 +37,7 @@ Page({
       showSettings: !saved.token,
       resumeId,
       resumeShort: resumeId.slice(0, 8),
+      offlineDraft: Boolean(saved.token && resumeId && hasLocalDraft(resumeId)),
     });
     if (saved.origin && saved.token) this.refresh();
   },
@@ -154,7 +156,7 @@ Page({
     this.allRecords = [];
     this.config = null;
     this.setData({ connected: false, showSettings: true, currentUser: null, token: "", password: "",
-      records: [], visibleRecords: [], totalCount: 0, resumeId: "", resumeShort: "" });
+      records: [], visibleRecords: [], totalCount: 0, resumeId: "", resumeShort: "", offlineDraft: false });
   },
 
   logout() {
@@ -219,7 +221,7 @@ Page({
       await action();
     } catch (error) {
       this.setData({ error: error.message });
-      if (error.code === "unauthorized") this.setData({ showSettings: true });
+      if (error.code === "unauthorized") this.setData({ showSettings: true, offlineDraft: false });
       if (error.code === "session_required" || error.code === "session_expired") {
         saveConnection(this.data.origin, "", "account", this.data.username);
         this.resetSession();
