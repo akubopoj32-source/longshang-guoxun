@@ -1,0 +1,75 @@
+{
+  "cases": [
+    {
+      "id": "complete-count-agrees",
+      "task": "trap",
+      "steps": [
+        {
+          "message": "今天上午，三号监测点看到两只疑似虫体。",
+          "image": "fixtures/synthetic/complete.png",
+          "expect": {"fields": {"location": "三号监测点", "time": "今天上午", "quantity": "两只"}, "visible_count": 2}
+        }
+      ]
+    },
+    {
+      "id": "complete-count-disagrees",
+      "task": "trap",
+      "steps": [
+        {
+          "message": "今天上午，三号监测点看到三只疑似虫体。",
+          "image": "fixtures/synthetic/complete.png",
+          "expect": {"fields": {"location": "三号监测点", "time": "今天上午", "quantity": "三只"}, "visible_count": 2, "count_conflict": true}
+        }
+      ]
+    },
+    {
+      "id": "partial-view",
+      "task": "trap",
+      "steps": [
+        {
+          "message": "今天上午，三号监测点看到两只疑似虫体。",
+          "image": "fixtures/synthetic/partial.png",
+          "expect": {"fields": {"location": "三号监测点", "time": "今天上午", "quantity": "两只"}, "visible_count": null}
+        }
+      ]
+    },
+    {
+      "id": "blurred-no-count-or-time",
+      "task": "trap",
+      "steps": [
+        {
+          "message": "三号监测点拍了一张照片。",
+          "image": "fixtures/synthetic/blurred.png",
+          "expect": {"fields": {"location": "三号监测点"}, "omit": ["quantity", "time", "observation"], "visible_count": null}
+        }
+      ]
+    },
+    {
+      "id": "irrelevant-photo",
+      "task": "trap",
+      "steps": [
+        {
+          "message": "上传一张照片供查看。",
+          "image": "fixtures/synthetic/irrelevant.png",
+          "expect": {"fields": {}, "omit": ["quantity", "time", "location", "observation"], "visible_count": null}
+        }
+      ]
+    },
+    {
+      "id": "spoken-correction",
+      "task": "trap",
+      "steps": [
+        {
+          "message": "今天上午，三号监测点看到两只疑似虫体。",
+          "image": "fixtures/synthetic/partial.png",
+          "expect": {"fields": {"location": "三号监测点", "time": "今天上午", "quantity": "两只"}, "visible_count": null}
+        },
+        {
+          "message": "更正：刚才说错了，实际是五号监测点。",
+          "image": "fixtures/synthetic/complete.png",
+          "expect": {"fields": {"location": "五号监测点"}, "corrections": {"location": "五号监测点"}, "retained": {"quantity": "两只", "time": "今天上午"}, "visible_count": 2}
+        }
+      ]
+    }
+  ]
+}

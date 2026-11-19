@@ -147,7 +147,17 @@ python -m evaluation.run --mode rules --input multimodal --output 'local/评测�
 
 `fixture` 模式使用本地文字规则和案例中预先写好的视觉响应，可模拟有限视野、数量差异及异常候选字段。`rules` 模式验证实际的本地规则和照片留存流程。纯文本输入会省略图片。两种模式都在本地运行，结果用于开发验收。真实视觉效果应在接入模型后单独实测。
 
-在 [案例文件](evaluation/cases.json) 中填写任务、输入步骤和预期结果。`expect` 适用于所有运行方式，`expect_by_variant` 可针对 `fixture-multimodal` 等运行方式覆盖预期值。`evaluation/fixtures/` 中的图片是团队自制示意图，用于模拟不同图像条件。输出 JSON 记录每步的字段、追问、修订历史、待核对项和逐项断言，也记录所用案例文件和图片的 SHA-256。断言失败时仍会输出结果，命令以退出码 1 结束。
+在 [案例文件](evaluation/cases.json) 中填写任务、输入步骤和预期结果。`expect` 适用于所有运行方式，`expect_by_variant` 可针对 `fixture-multimodal` 等运行方式覆盖预期值。离线案例使用团队自制示意图。输出 JSON 记录每步的字段、追问、修订历史、待核对项和逐项断言，也记录所用案例文件和图片的 SHA-256。断言失败时仍会输出结果，命令以退出码 1 结束。
+
+## 真实模型对照评测
+
+在本机配置 `ORCHARD_MODEL_URL`、`ORCHARD_MODEL` 和模型密钥后，运行下方命令。每步发起一次纯文本请求和一次图文请求。纯文本与图文各自按正常工作流累积上下文。图文原始候选和应用证据规则后的结果共享同一次响应，可逐项核对约束效果。
+
+```powershell
+python -m evaluation.live --output 'local/评测结果/真实模型对照.json'
+```
+
+默认使用 [真实模型案例](evaluation/live_cases.json) 和 [AI 模拟图片](evaluation/fixtures/synthetic/README.md)。输出保留逐步断言、模型候选、追问、依据和更正历史。脚本以 `0` 表示全部通过，以 `1` 表示有断言失败，以 `2` 表示执行或模型服务错误。案例与图片是模拟测试数据，结果适用于开发验收。
 
 ## 参赛资料
 
