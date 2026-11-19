@@ -10,7 +10,7 @@
 </head>
 <body>
   <header class="app-bar">
-    <div class="brand"><span class="brand-mark" aria-hidden="true">陇</span><h1>陇上果巡</h1><span class="app-label">巡查工作台</span></div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true">陇</span><div class="brand-title"><h1>陇上果巡</h1><span class="app-label">智能巡查工作台</span></div></div>
     <div class="row app-tools">
       <div class="app-status" role="status"><span id="service-status">正在连接巡查服务…</span><span id="mode" class="mode"></span></div>
       <button id="open-connection" type="button" class="secondary">连接状态</button>
@@ -50,9 +50,21 @@
         <label for="task">任务类型</label>
         <div class="row"><select id="task" required></select><button>新建记录</button><button id="cancel-new-record" class="secondary" type="button">取消</button></div>
       </form>
-      <section id="record-empty" class="card workspace-empty" aria-labelledby="empty-title">
-        <h2 id="empty-title">选择一条巡查记录</h2>
-        <p>从队列打开记录，即可查看原始证据并复核字段。</p>
+      <section id="record-empty" class="workspace-empty" aria-labelledby="empty-title">
+        <div class="welcome-copy">
+          <h2 id="empty-title">巡查智能体</h2>
+          <p>把现场描述和照片整理成可追溯、可复核的巡查记录。</p>
+          <div class="row welcome-actions">
+            <button id="empty-new-record" type="button">开始巡查</button>
+            <button id="empty-record-list" type="button" class="secondary">查看全部记录</button>
+          </div>
+        </div>
+        <dl class="welcome-workflow" aria-label="巡查处理流程">
+          <div><dt>采集</dt><dd>现场描述与照片</dd></div>
+          <div><dt>提取</dt><dd>结构化字段与原始依据</dd></div>
+          <div><dt>核验</dt><dd>缺项追问与图文核对</dd></div>
+          <div><dt>复核</dt><dd>人工确认与复查单</dd></div>
+        </dl>
       </section>
       <div id="record-workspace" hidden>
         <section class="card record-header" aria-labelledby="record-title">
@@ -64,9 +76,24 @@
             <div id="actions" class="row actions"></div>
           </div>
           <p id="return-note" class="evidence-alerts" hidden></p>
+          <section class="agent-workflow" aria-labelledby="workflow-title">
+            <div class="row workflow-heading">
+              <h3 id="workflow-title">智能体工作流</h3>
+              <span id="workflow-mode" class="workflow-mode" hidden></span>
+            </div>
+            <ol class="workflow-steps">
+              <li id="workflow-input"><strong>多模态采集</strong><p id="workflow-input-detail"></p></li>
+              <li id="workflow-extract"><strong>字段提取</strong><p id="workflow-extract-detail"></p></li>
+              <li id="workflow-check"><strong>追问与核验</strong><p id="workflow-check-detail"></p></li>
+              <li id="workflow-review"><strong>人工复核</strong><p id="workflow-review-detail"></p></li>
+            </ol>
+          </section>
           <div id="record-progress" class="record-progress" hidden>
-            <p id="record-next"></p>
-            <ul id="record-unresolved" aria-label="待补充或待核实的字段"></ul>
+            <div class="record-progress-text">
+              <p id="record-next"></p>
+              <ul id="record-unresolved" aria-label="待补充或待核实的字段"></ul>
+            </div>
+            <button type="button" id="next-action" class="secondary compact" hidden></button>
           </div>
           <details id="review-note-panel" hidden>
             <summary>复核意见（选填）</summary>
@@ -209,19 +236,36 @@
     <div id="photo-viewport" tabindex="0" aria-label="照片查看区"><img id="photo-full" alt="巡查原图"></div>
   </dialog>
   <dialog id="knowledge-dialog" class="workbench-dialog" aria-labelledby="knowledge-title">
-    <div class="row list-heading">
-      <h2 id="knowledge-title">巡查知识库</h2>
+    <div class="row knowledge-heading">
+      <h2 id="knowledge-title">知识检索与引用</h2>
       <form method="dialog"><button type="submit" class="secondary">关闭</button></form>
     </div>
-    <p id="knowledge-context" class="question" hidden></p>
-    <form id="knowledge-form">
-      <label for="knowledge-question">查询问题</label>
-      <textarea id="knowledge-question" rows="2" required minlength="2" maxlength="300" placeholder="例如：诱捕监测需要记录哪些字段？"></textarea>
-      <button type="submit" id="ask-knowledge">查询资料</button>
-    </form>
-    <p id="knowledge-result-mode" class="knowledge-result-mode" hidden></p>
-    <p id="knowledge-answer" role="status" aria-live="polite"></p>
-    <ol id="knowledge-sources" aria-label="资料来源"></ol>
+    <div class="knowledge-body">
+      <p id="knowledge-context" class="question" hidden></p>
+      <form id="knowledge-form">
+        <label for="knowledge-question">查询问题</label>
+        <textarea id="knowledge-question" rows="2" required minlength="2" maxlength="300" placeholder="输入巡查、记录或复核问题"></textarea>
+        <div class="row knowledge-form-actions">
+          <div id="knowledge-suggestions" class="row" aria-label="示例问题">
+            <button type="button" class="secondary compact" data-question="诱捕监测需要记录哪些字段？">诱捕记录</button>
+            <button type="button" class="secondary compact" data-question="冰雹过后怎么记录果园异常？">冰雹后巡查</button>
+            <button type="button" class="secondary compact" data-question="照片拍糊了应该怎么补拍？">补拍要求</button>
+          </div>
+          <button type="submit" id="ask-knowledge">查询资料</button>
+        </div>
+      </form>
+      <div id="knowledge-results" class="knowledge-results" hidden>
+        <section class="knowledge-answer-panel" aria-labelledby="knowledge-answer-title">
+          <h3 id="knowledge-answer-title">查询结果</h3>
+          <p id="knowledge-result-mode" class="knowledge-result-mode" hidden></p>
+          <p id="knowledge-answer" role="status" aria-live="polite"></p>
+        </section>
+        <section id="knowledge-citations" class="knowledge-citations" aria-labelledby="knowledge-citations-title" hidden>
+          <h3 id="knowledge-citations-title">资料与出处</h3>
+          <ol id="knowledge-sources" aria-label="资料来源"></ol>
+        </section>
+      </div>
+    </div>
   </dialog>
   <dialog id="print-preview" aria-labelledby="print-title">
     <div class="print-toolbar row">

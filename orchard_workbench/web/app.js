@@ -26,6 +26,7 @@ let mode;
 let modelName = "";
 let connectionState = "connecting";
 let pendingTurn;
+let turnProcessing = "";
 let inspectorEditor;
 let inspectorsBusy = false;
 const activityFormat = new Intl.DateTimeFormat("zh-CN", {dateStyle: "short", timeStyle: "short"});
@@ -81,6 +82,7 @@ function showModelStatus(degraded = false) {
   const label = degraded ? "图文模型上次处理失败，可用规则保存"
     : mode === "model" ? (modelName ? `图文模型 · ${modelName}` : "图文模型已配置") : "本地规则模式";
   $("mode").textContent = label;
+  $("mode").dataset.mode = degraded ? "degraded" : mode;
   $("connection-model").textContent = !degraded && mode === "model"
     ? `${label}。使用模型处理时，本轮输入会发送到已配置的模型服务。`
     : label;
@@ -312,24 +314,74 @@ function setTurnFeedback(message, status = "") {
   feedback.classList.toggle("error", status === "error");
 }
 
-function renderProgress({record, pending, questions}, task) {
-  const hasCountConflict = state.evidence_alerts?.length;
+function turnInputs(turn) {
+  return [turn.message && "文字", turn.image && "照片"].filter(Boolean).join(" + ");
+}
+
+function renderWorkflow(record, pending, questions, completed, total) {
+  const latest = record.turns.at(-1);
+  const editable = ["draft", "returned"].includes(record.status);
+  const needsAttention = Boolean(questions[0] || pending.length);
+  const engine = {model: "图文模型", rules: "本地规则"}[latest?.extraction_mode];
+  const reviewState = {draft: "待提交", returned: "已退回补充", pending: "待人工复核", confirmed: "已人工确认"};
+  const active = turnProcessing ? "extract" : !latest && record.status === "draft" ? "input"
+    : editable && (needsAttention || record.status === "returned") ? "check" : "review";
+  const workflowMode = $("workflow-mode");
+  workflowMode.hidden = !engine;
+  workflowMode.textContent = engine ? `最近一轮 · ${engine}` : "";
+
+  const steps = {
+    input: [latest ? `${record.turns.length} 轮 · ${turnInputs(latest)}` : "等待巡查输入", latest ? "done" : "waiting"],
+    extract: [turnProcessing || (latest ? `${completed}/${total} 项已记录` : "等待提取"), latest && !turnProcessing ? "done" : "waiting"],
+    check: [!latest ? "等待提取" : editable && questions[0] ? "有待补充信息"
+      : pending.length ? `${pending.length} 项待核实` : "字段可供复核", !latest ? "waiting" : needsAttention ? "attention" : "done"],
+    review: [reviewState[record.status], record.status === "confirmed" ? "done"
+      : ["pending", "returned"].includes(record.status) ? "attention" : "waiting"],
+  };
+  for (const [step, [detail, stepState]] of Object.entries(steps)) {
+    const item = $(`workflow-${step}`);
+    item.dataset.state = stepState;
+    item.setAttribute("aria-current", step === active ? "step" : "false");
+    $(`workflow-${step}-detail`).textContent = detail;
+  }
+}
+
+function renderProgress({record, pending, questions, evidence_alerts}, task) {
+  const hasCountConflict = evidence_alerts?.length;
   const statuses = Object.entries(task.fields).map(([key, label]) => {
     const status = key === "quantity" && hasCountConflict ? "conflict" : record.fields[key]?.status;
     return {label, text: fieldStates[status] || "待补充", complete: status === "recorded"};
   });
   const next = {
-    draft: questions[0] || (pending.length ? "可补充现场信息，或将待核实事项一并提交。" : "可以提交复核。"),
+    draft: record.turns.length ? questions[0] || (pending.length ? "可补充现场信息，或将待核实事项一并提交。" : "可以提交复核。")
+      : "录入文字或照片，开始本轮巡查。",
     returned: questions[0] || "请按退回意见补充证据，再提交复核。",
     pending: pending.length ? "请核对证据与待核实事项，再确认或退回。" : "请核对证据后确认当前版本。",
     confirmed: "可预览或导出本版复查单。",
   };
+  renderWorkflow(record, pending, questions, statuses.filter((item) => item.complete).length, statuses.length);
   $("record-progress").hidden = false;
   const followUp = ["draft", "returned"].includes(record.status) && questions[0];
-  $("record-next").textContent = `已记录 ${statuses.filter((item) => item.complete).length}/${statuses.length} 项 · ${followUp ? "追问 · " : ""}${next[record.status]}`;
-  $("record-unresolved").replaceChildren(...statuses.filter((item) => !item.complete).map((item) =>
+  $("record-progress").dataset.attention = String(Boolean(followUp || pending.length && record.status === "pending"));
+  $("record-next").textContent = `${followUp ? "追问 · " : ""}${next[record.status]}`;
+  $("record-unresolved").replaceChildren(...statuses.filter((item) => record.turns.length && !item.complete).map((item) =>
     element("li", `${item.label} · ${item.text}`, "badge badge-pending")));
+  const action = $("next-action");
+  const supplement = Boolean(followUp || record.status === "returned");
+  const inspectPending = record.status === "pending" && pending.length > 0;
+  action.hidden = !supplement && !inspectPending;
+  action.dataset.action = supplement ? "supplement" : "review";
+  action.textContent = supplement ? "补充信息" : "查看待核实";
 }
+
+$("next-action").addEventListener("click", (event) => {
+  if (event.currentTarget.dataset.action === "supplement") {
+    $("message").focus();
+  } else {
+    $("pending-panel").open = true;
+    $("pending-panel").querySelector("summary").focus();
+  }
+});
 
 function renderFields(task, record, alerts) {
   $("fields").replaceChildren();
@@ -390,7 +442,8 @@ function renderEvidence() {
   $("evidence-turn").value = turn.id;
   const source = {model: "图文模型", rules: "本地规则"}[turn.extraction_mode];
   $("evidence-source").textContent = source ? `第 ${turn.id} 轮 · ${source}` : `第 ${turn.id} 轮`;
-  $("evidence-inputs").textContent = [turn.message && "巡查描述", turn.image && "巡查照片"].filter(Boolean).join(" + ");
+  $("evidence-source").dataset.engine = turn.extraction_mode || "";
+  $("evidence-inputs").textContent = turnInputs(turn);
   const taskFields = tasks[record.task].fields;
   const links = Object.entries(taskFields).filter(([key]) =>
     record.fields[key]?.evidence?.some((item) => item.turn === turn.id && !item.superseded));
@@ -624,6 +677,14 @@ function toggleNewRecord(open) {
 $("toggle-new-record").addEventListener("click", () => {
   if (tasks) toggleNewRecord($("new-record").hidden);
 });
+$("empty-new-record").addEventListener("click", () => {
+  if (tasks) toggleNewRecord(true);
+});
+$("empty-record-list").addEventListener("click", () => {
+  if (!tasks) return;
+  selectQueue("", true);
+  ($("record-list").querySelector("button") || $("record-search")).focus();
+});
 $("cancel-new-record").addEventListener("click", () => toggleNewRecord(false));
 $("new-record").addEventListener("submit", (event) => {
   event.preventDefault();
@@ -662,6 +723,8 @@ $("turn").addEventListener("submit", (event) => {
         message: $("message").value.trim(), image: await readImage($("photo").files[0]), version: state.record.version,
         status: state.record.status, rules_only: rulesOnly,
       };
+      turnProcessing = rulesOnly || mode !== "model" ? "本地规则处理中…" : "模型提取中…";
+      renderProgress(state, tasks[state.record.task]);
       data = await request(`/api/records/${state.id}/turn`, payload);
     } catch (error) {
       if (error.code === "model_unavailable") {
@@ -675,6 +738,9 @@ $("turn").addEventListener("submit", (event) => {
         setTurnFeedback(error.message, "error");
       }
       return;
+    } finally {
+      turnProcessing = "";
+      renderProgress(state, tasks[state.record.task]);
     }
     if (!rulesOnly) showModelStatus();
     return finishTurn(data);
@@ -763,9 +829,24 @@ $("field-review-form").addEventListener("submit", (event) => {
   });
 });
 $("close-preview").addEventListener("click", () => $("print-preview").close());
+function clearKnowledgeResult() {
+  $("knowledge-results").hidden = true;
+  $("knowledge-citations").hidden = true;
+  $("knowledge-result-mode").hidden = true;
+  $("knowledge-answer").textContent = "";
+  $("knowledge-sources").replaceChildren();
+}
+
 $("open-knowledge").addEventListener("click", () => {
   $("knowledge-context").hidden = true;
   $("knowledge-dialog").showModal();
+});
+$("knowledge-suggestions").addEventListener("click", (event) => {
+  const suggestion = event.target.closest("button[data-question]");
+  if (!suggestion || knowledgePending) return;
+  $("knowledge-question").value = suggestion.dataset.question;
+  clearKnowledgeResult();
+  $("knowledge-question").focus();
 });
 $("field-knowledge").addEventListener("click", () => {
   if (knowledgePending) return;
@@ -784,9 +865,7 @@ $("field-knowledge").addEventListener("click", () => {
   $("knowledge-context").hidden = false;
   $("knowledge-context").textContent = `当前字段 · ${label}。问题可编辑，点击「查询资料」后发送。`;
   $("knowledge-question").value = question;
-  $("knowledge-result-mode").hidden = true;
-  $("knowledge-answer").textContent = "";
-  $("knowledge-sources").replaceChildren();
+  clearKnowledgeResult();
   $("knowledge-dialog").showModal();
 });
 $("knowledge-form").addEventListener("submit", async (event) => {
@@ -798,12 +877,12 @@ $("knowledge-form").addEventListener("submit", async (event) => {
   const input = $("knowledge-question");
   button.disabled = true;
   input.readOnly = true;
+  clearKnowledgeResult();
   const answer = $("knowledge-answer");
   const resultMode = $("knowledge-result-mode");
-  resultMode.hidden = true;
   answer.className = "";
   answer.textContent = "正在查询资料…";
-  $("knowledge-sources").replaceChildren();
+  $("knowledge-results").hidden = false;
   try {
     const result = await request("/api/knowledge/ask", {question: input.value});
     const count = result.retrieved_count ?? result.sources.length;
@@ -815,6 +894,7 @@ $("knowledge-form").addEventListener("submit", async (event) => {
     resultMode.textContent = (labels[result.status] || []).filter(Boolean).join(" · ");
     resultMode.hidden = !resultMode.textContent;
     answer.textContent = result.answer;
+    $("knowledge-citations").hidden = result.sources.length === 0;
     for (const source of result.sources) {
       const item = element("li");
       item.append(element("strong", source.source), element("p", source.section, "muted"), element("p", source.text));
